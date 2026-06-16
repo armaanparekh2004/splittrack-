@@ -1,8 +1,7 @@
 export default async function handler(req, res) {
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
-
   const { transactions } = req.body;
-  if (!transactions || !transactions.length) return res.status(400).json({ error: "No transactions" });
+  if (!transactions?.length) return res.status(400).json({ error: "No transactions" });
 
   const list = transactions.map(t => `${t.id}:"${t.merchant}" $${t.amount}`).join("\n");
 
@@ -16,11 +15,15 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-6",
-        max_tokens: 1000,
+        max_tokens: 1500,
         messages: [{
           role: "user",
-          content: `Categorize each transaction into exactly one of: Dining, Groceries, Transport, Subscriptions, Shopping, Entertainment, Health, Other.
-Return ONLY a JSON object like {"1":"Dining","2":"Shopping"} — no preamble, no markdown.
+          content: `For each transaction, return a JSON object with:
+- category: one of Dining, Groceries, Transport, Subscriptions, Shopping, Entertainment, Health, Other
+- displayName: a clean human-readable name (e.g. "ZAHAV RESTAURANT" → "Zahav", "DD *DOORDASH" → "DoorDash", "UBER *EATS" → "Uber Eats", "NJTRANSIT - WEB" → "NJ Transit", "SQ *HAPPY STAR" → "Happy Star", "ANTHROPIC* CLAUDE SUB" → "Claude Subscription")
+
+Return ONLY a JSON object like: {"1":{"category":"Dining","displayName":"Zahav"},"2":{"category":"Transport","displayName":"Uber"}}
+No markdown, no preamble.
 
 Transactions:
 ${list}`
@@ -35,6 +38,6 @@ ${list}`
     res.status(200).json({ categories: result });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Categorization failed" });
+    res.status(500).json({ error: "Enrichment failed" });
   }
 }
