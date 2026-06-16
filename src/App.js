@@ -16,36 +16,38 @@ let _txId = 1000;
 
 // ── CSV parser for Chase format ────────────────────────────────────
 function parseChaseCSV(csvText) {
-  const result = Papa.parse(csvText.trim(), { header: true, skipEmptyLines: true });
-  return result.data.map((row, i) => {
-    // Chase columns: Transaction Date, Post Date, Description, Category, Type, Amount, Memo
-    const merchant = (row["Description"] || row["description"] || "Unknown").trim();
-    const rawAmount = parseFloat(row["Amount"] || row["amount"] || 0);
-    const amount = Math.abs(rawAmount);
+  const decoded = csvText.replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">");
+  const firstLine = decoded.split("\n")[0];
+  const delimiter = firstLine.includes("\t") ? "\t" : ",";
+  const result = Papa.parse(decoded.trim(), { header: true, skipEmptyLines: true, delimiter });
+  if (!result.data.length) throw new Error("No rows parsed");
+  return result.data.map((row) => {
+    const merchant = (row["Description"] || row["description"] || "Unknown")
+      .trim().replace(/\s+/g, " ");
+    const rawAmount = parseFloat((row["Amount"] || row["amount"] || "0").replace(/[^0-9.-]/g, ""));
     const isCredit = rawAmount > 0;
+    const amount = Math.abs(rawAmount);
     const date = row["Transaction Date"] || row["Post Date"] || row["transaction date"] || "";
-    // Format date nicely
     let dateStr = date;
     try {
       const d = new Date(date);
-      dateStr = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+      if (!isNaN(d)) dateStr = d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
     } catch {}
+    // Pre-fill category from Chase's own category field
+    const chaseCategory = (row["Category"] || "").toLowerCase();
+    let category = null;
+    if (chaseCategory.includes("food") || chaseCategory.includes("drink")) category = "Dining";
+    else if (chaseCategory.includes("grocer")) category = "Groceries";
+    else if (chaseCategory.includes("travel")) category = "Transport";
+    else if (chaseCategory.includes("shopping")) category = "Shopping";
+    else if (chaseCategory.includes("health") || chaseCategory.includes("medical")) category = "Health";
+    else if (chaseCategory.includes("entertainment")) category = "Entertainment";
     return {
-      id: _txId++,
-      merchant,
-      date: dateStr,
-      rawDate: date,
-      total: amount,
-      myShare: amount,
-      split: false,
-      people: [],
-      settled: false,
-      category: null,
-      amazonItems: null,
-      isCredit,
-      source: "chase",
+      id: _txId++, merchant, date: dateStr, rawDate: date,
+      total: amount, myShare: amount, split: false, people: [],
+      settled: false, category, amazonItems: null, isCredit, source: "chase",
     };
-  }).filter(t => !t.isCredit && t.total > 0); // only debits
+  }).filter(t => !t.isCredit && t.total > 0);
 }
 
 // ── AI categorize via serverless ───────────────────────────────────
@@ -168,9 +170,9 @@ const TxDetail = ({ tx, onClose, onUpdateCategory, onMarkSplit, onMarkSettled })
 };
 
 // ── Add Split sheet ────────────────────────────────────────────────
-const AddSplit = ({ onClose, onAdd, transactions }) => {
-  const [mode, setMode] = useState("existing"); // existing | new
-  const [selectedTx, setSelectedTx] = useState(null);
+const AddSplit = ({ onClose, onAdd, transactions, preSelectedTx = null }) => {
+  const [mode, setMode] = useState(preSelectedTx ? "existing" : "existing"); // existing | new
+  const [selectedTx, setSelectedTx] = useState(preSelectedTx);
   const [merchant, setMerchant] = useState("");
   const [total, setTotal] = useState("");
   const [myAmt, setMyAmt] = useState("");
@@ -445,16 +447,18 @@ const Dashboard = ({ transactions, splits, setTab, onReimport }) => {
 };
 
 // ── Activity ───────────────────────────────────────────────────────
-const Activity = ({ transactions, setTransactions, categorizing, onReimport }) => {
+const Activity = ({ transactions, setTransactions, categorizing, onReimport, onAddSplits }) => {
   const [filter, setFilter] = useState("all");
   const [selectedTx, setSelectedTx] = useState(null);
   const [editCatId, setEditCatId] = useState(null);
   const [toast, setToast] = useState(null);
   const [search, setSearch] = useState("");
+  const [pendingSplitTx, setPendingSplitTx] = useState(null);
+  const [showAdd, setShowAdd] = useState(false);
 
   function showToast(msg) { setToast(msg); setTimeout(() => setToast(null), 2000); }
   function updateCat(id, cat) { setTransactions(prev => prev.map(t => t.id === id ? { ...t, category: cat } : t)); }
-  function markSplit(id) { setTransactions(prev => prev.map(t => t.id === id ? { ...t, split: true } : t)); showToast("Marked as split"); }
+  function markSplit(id) { setSelectedTx(null); setShowAdd(true); setPendingSplitTx(id); }
   function markSettled(id) { setTransactions(prev => prev.map(t => t.id === id ? { ...t, settled: true } : t)); showToast("Marked as settled ✓"); }
 
   const filtered = transactions.filter(t => {
@@ -471,6 +475,7 @@ const Activity = ({ transactions, setTransactions, categorizing, onReimport }) =
       {toast && <Toast msg={toast} />}
       {tx && <TxDetail tx={tx} onClose={() => setSelectedTx(null)} onUpdateCategory={updateCat} onMarkSplit={markSplit} onMarkSettled={markSettled} />}
       {editCatId && <CatSheet current={transactions.find(t => t.id === editCatId)?.category} onSelect={cat => { updateCat(editCatId, cat); setEditCatId(null); }} onClose={() => setEditCatId(null)} />}
+      {showAdd && <AddSplit onClose={() => { setShowAdd(false); setPendingSplitTx(null); }} transactions={transactions} preSelectedTx={pendingSplitTx} onAdd={s => { const perPerson = (s.total - s.myShare) / s.people.length; const newSplits = s.people.map((p, i) => ({ id: Date.now() + i, person: p, merchant: s.merchant, amount: perPerson, date: s.date, settled: false })); onAddSplits(newSplits); if (s.existingTxId) { setTransactions(prev => prev.map(t => t.id === s.existingTxId ? { ...t, split: true, people: s.people, myShare: s.myShare } : t)); } showToast("Split added ✓"); }} />}
 
       <div style={{ paddingTop: 16, paddingBottom: 16 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 14 }}>
@@ -759,7 +764,7 @@ export default function App() {
       </div>
       <div style={{ overflowY: "auto", height: "calc(100vh - 62px)" }}>
         {tab === "dashboard" && <Dashboard transactions={transactions} splits={splits} setTab={setTab} onReimport={() => setScreen("import")} />}
-        {tab === "transactions" && <Activity transactions={transactions} setTransactions={setTransactions} categorizing={categorizing} onReimport={() => setScreen("import")} />}
+        {tab === "transactions" && <Activity transactions={transactions} setTransactions={setTransactions} categorizing={categorizing} onReimport={() => setScreen("import")} onAddSplits={newSplits => setSplits(prev => [...prev, ...newSplits])} />}
         {tab === "splits" && <Splits splits={splits} setSplits={setSplits} transactions={transactions} showAdd={showAdd} setShowAdd={setShowAdd} />}
         {tab === "settings" && <Settings onReimport={() => setScreen("import")} transactionCount={transactions.length} />}
       </div>
