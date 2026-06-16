@@ -1,797 +1,785 @@
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect } from "react";
 import Papa from "papaparse";
 
-// ── Tokens ─────────────────────────────────────────────────────────
-const C = {
-  bg:"#F7F8FA", card:"#FFFFFF", border:"#EBEBEB",
-  accent:"#1DB954", accentDim:"#1DB95418",
-  text:"#111111", textSub:"#6B7280", textMuted:"#9CA3AF",
-  red:"#EF4444", redDim:"#EF444415",
-  yellow:"#F59E0B", yellowDim:"#F59E0B15",
-  blue:"#3B82F6", blueDim:"#3B82F615",
-  purple:"#8B5CF6",
-  dark:"#111111",
+// ─── Uber Base design tokens ───────────────────────────────────────
+const U = {
+  ink:       "#000000",
+  inkSub:    "#545454",
+  inkMuted:  "#ABABAB",
+  canvas:    "#FFFFFF",
+  soft:      "#F6F6F6",
+  border:    "#EEEEEE",
+  pressed:   "#E2E2E2",
+  // Category accent colors — small use only (icons/dots)
+  red:    "#E53935",
+  green:  "#43A047",
+  blue:   "#1E88E5",
+  purple: "#8E24AA",
+  amber:  "#FB8C00",
+  pink:   "#E91E8C",
+  teal:   "#00897B",
+  grey:   "#757575",
 };
-const ALL_CATS=["Dining","Groceries","Transport","Subscriptions","Shopping","Entertainment","Health","Other"];
-const CAT_COLOR={Dining:"#EF4444",Groceries:"#10B981",Transport:"#3B82F6",Subscriptions:"#8B5CF6",Shopping:"#F59E0B",Entertainment:"#EC4899",Health:"#14B8A6",Other:"#9CA3AF"};
-const CAT_EMOJI={Dining:"🍽️",Groceries:"🛒",Transport:"🚗",Subscriptions:"📱",Shopping:"🛍️",Entertainment:"🎬",Health:"💊",Other:"💳"};
-let _id=2000;
+const CAT = ["Dining","Groceries","Transport","Subscriptions","Shopping","Entertainment","Health","Other"];
+const CAT_C = { Dining:U.red, Groceries:U.green, Transport:U.blue, Subscriptions:U.purple, Shopping:U.amber, Entertainment:U.pink, Health:U.teal, Other:U.grey };
+const CAT_E = { Dining:"🍽",Groceries:"🛒",Transport:"🚗",Subscriptions:"📱",Shopping:"🛍",Entertainment:"🎬",Health:"💊",Other:"💳" };
 
-// ── Chase CSV ──────────────────────────────────────────────────────
-function parseChaseCSV(text){
-  const decoded=text.replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">");
-  const delim=decoded.split("\n")[0].includes("\t")?"\t":",";
-  const {data}=Papa.parse(decoded.trim(),{header:true,skipEmptyLines:true,delimiter:delim});
-  if(!data.length) throw new Error("empty");
-  return data.map(row=>{
-    const merchant=(row["Description"]||row["description"]||"Unknown").trim().replace(/\s+/g," ");
-    const raw=parseFloat((row["Amount"]||row["amount"]||"0").replace(/[^0-9.-]/g,""));
-    const isCredit=raw>0; const amount=Math.abs(raw);
-    const dateRaw=row["Transaction Date"]||row["Post Date"]||"";
-    let date=dateRaw;
-    try{const d=new Date(dateRaw);if(!isNaN(d))date=d.toLocaleDateString("en-US",{month:"short",day:"numeric"});}catch{}
-    const cc=(row["Category"]||"").toLowerCase();
-    let category=null;
+// ─── Typography helpers ────────────────────────────────────────────
+const T = {
+  h1:   { fontSize:28, fontWeight:700, letterSpacing:-0.5, color:U.ink },
+  h2:   { fontSize:20, fontWeight:700, color:U.ink },
+  h3:   { fontSize:17, fontWeight:700, color:U.ink },
+  body: { fontSize:15, fontWeight:400, color:U.ink },
+  sub:  { fontSize:13, fontWeight:400, color:U.inkSub },
+  tiny: { fontSize:11, fontWeight:700, letterSpacing:0.6, color:U.inkMuted },
+  num:  { fontSize:15, fontWeight:700, color:U.ink },
+  bigNum:{ fontSize:36, fontWeight:700, letterSpacing:-1, color:U.ink },
+};
+const txt = (style,extra={})=>({...style,...extra,margin:0,fontFamily:"-apple-system,'SF Pro Text',sans-serif"});
+
+// ─── Spacing ───────────────────────────────────────────────────────
+const S = { xs:4, sm:8, md:16, lg:24, xl:32 };
+
+// ─── Chase CSV ─────────────────────────────────────────────────────
+let _uid = 1;
+function parseCSV(raw) {
+  const clean = raw.replace(/&amp;/g,"&").replace(/&lt;/g,"<").replace(/&gt;/g,">");
+  const delim = clean.split("\n")[0].includes("\t") ? "\t" : ",";
+  const { data } = Papa.parse(clean.trim(), { header:true, skipEmptyLines:true, delimiter:delim });
+  if (!data.length) throw new Error("empty");
+  return data.map(r => {
+    const merchant = (r["Description"]||r["description"]||"Unknown").trim().replace(/\s+/g," ");
+    const raw2 = parseFloat((r["Amount"]||r["amount"]||"0").replace(/[^0-9.-]/g,""));
+    const isCredit = raw2 > 0;
+    const amount = Math.abs(raw2);
+    const dateRaw = r["Transaction Date"] || r["Post Date"] || "";
+    let date = dateRaw;
+    try { const d=new Date(dateRaw); if(!isNaN(d)) date=d.toLocaleDateString("en-US",{month:"short",day:"numeric"}); } catch {}
+    const cc = (r["Category"]||"").toLowerCase();
+    let category = null;
     if(cc.includes("food")||cc.includes("drink")) category="Dining";
     else if(cc.includes("grocer")) category="Groceries";
     else if(cc.includes("travel")) category="Transport";
     else if(cc.includes("shopping")) category="Shopping";
     else if(cc.includes("health")||cc.includes("medical")) category="Health";
     else if(cc.includes("entertainment")) category="Entertainment";
-    return {id:_id++,merchant,displayName:null,date,total:amount,myShare:amount,split:false,people:[],settled:false,category,isCredit,source:"chase"};
-  }).filter(t=>!t.isCredit&&t.total>0);
+    return { id:_uid++, merchant, displayName:null, date, total:amount, myShare:amount, split:false, people:[], settled:false, category, isCredit };
+  }).filter(t => !t.isCredit && t.total > 0);
 }
 
-// ── AI: categorize + display names ────────────────────────────────
-async function aiEnrich(txs){
-  const todo=txs.filter(t=>!t.category||!t.displayName);
-  if(!todo.length) return {};
-  try{
-    const r=await fetch("/api/categorize",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({transactions:todo.map(t=>({id:t.id,merchant:t.merchant,amount:t.total})),mode:"enrich"})});
-    const d=await r.json();
-    return d.categories||{};
-  }catch{return {};}
+// ─── AI enrich ────────────────────────────────────────────────────
+async function enrich(txs) {
+  const todo = txs.filter(t => !t.category || !t.displayName);
+  if (!todo.length) return {};
+  try {
+    const r = await fetch("/api/categorize", {
+      method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({ transactions: todo.map(t=>({id:t.id,merchant:t.merchant,amount:t.total})) })
+    });
+    const d = await r.json();
+    return d.categories || {};
+  } catch { return {}; }
 }
 
-// ── Slide animation helper ─────────────────────────────────────────
-const slideStyle=(visible,dir="up")=>({
-  transform:visible?"translateY(0)":`translateY(${dir==="up"?"100%":"-100%"})`,
-  transition:"transform 0.32s cubic-bezier(0.32,0.72,0,1)",
-  willChange:"transform",
-});
+// ─── Divider ───────────────────────────────────────────────────────
+const Div = ({ indent=0 }) => (
+  <div style={{ height:1, background:U.border, marginLeft:indent }} />
+);
 
-// ── Haptic ────────────────────────────────────────────────────────
-function haptic(){try{if(navigator.vibrate)navigator.vibrate(10);}catch{}}
-
-// ── Atoms ─────────────────────────────────────────────────────────
-const Avatar=({name,size=36,color})=>{
-  const bg=color||CAT_COLOR[name]||C.accent;
-  return <div style={{width:size,height:size,borderRadius:"50%",background:bg+"20",display:"flex",alignItems:"center",justifyContent:"center",color:bg,fontWeight:700,fontSize:size*.38,flexShrink:0}}>{name[0].toUpperCase()}</div>;
-};
-const CatBadge=({cat})=><span style={{background:CAT_COLOR[cat]+"18",color:CAT_COLOR[cat],fontSize:11,fontWeight:600,padding:"3px 8px",borderRadius:20,whiteSpace:"nowrap"}}>{CAT_EMOJI[cat]} {cat}</span>;
-const Divider=()=><div style={{height:1,background:C.border,margin:"0 0"}}/>;
-
-// ── Bottom sheet ──────────────────────────────────────────────────
-const Sheet=({open,onClose,children,title,height="auto"})=>{
-  const [visible,setVisible]=useState(false);
-  useEffect(()=>{if(open){setTimeout(()=>setVisible(true),10);}else{setVisible(false);}},[open]);
-  if(!open&&!visible) return null;
-  return(
-    <div style={{position:"fixed",inset:0,zIndex:300,display:"flex",flexDirection:"column",justifyContent:"flex-end"}} onClick={()=>{setVisible(false);setTimeout(onClose,320);}}>
-      <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.4)",opacity:visible?1:0,transition:"opacity 0.3s"}}/>
-      <div onClick={e=>e.stopPropagation()} style={{...slideStyle(visible,"up"),position:"relative",background:C.card,borderRadius:"20px 20px 0 0",maxHeight:"92vh",overflowY:"auto",boxShadow:"0 -4px 40px rgba(0,0,0,0.12)"}}>
-        <div style={{width:40,height:4,borderRadius:2,background:C.border,margin:"12px auto 0"}}/>
-        {title&&<div style={{padding:"16px 20px 8px",borderBottom:`1px solid ${C.border}`}}>
-          <p style={{color:C.text,fontSize:17,fontWeight:700,margin:0}}>{title}</p>
-        </div>}
-        <div style={{padding:"0 0 48px"}}>{children}</div>
-      </div>
-    </div>
-  );
-};
-
-// ── Page transition ───────────────────────────────────────────────
-const Page=({children,active})=>(
-  <div style={{opacity:active?1:0,transform:active?"translateX(0)":"translateX(20px)",transition:"opacity 0.22s ease, transform 0.22s ease"}}>
-    {children}
+// ─── Icon box ──────────────────────────────────────────────────────
+const Icon = ({ emoji, color, size=48 }) => (
+  <div style={{ width:size, height:size, borderRadius:12, background:color+"18", display:"flex", alignItems:"center", justifyContent:"center", fontSize:size*0.46, flexShrink:0 }}>
+    {emoji}
   </div>
 );
 
-// ── Category picker ───────────────────────────────────────────────
-const CatPicker=({open,current,onSelect,onClose})=>(
+// ─── Avatar ────────────────────────────────────────────────────────
+const Av = ({ name, size=36 }) => (
+  <div style={{ width:size, height:size, borderRadius:999, background:U.pressed, display:"flex", alignItems:"center", justifyContent:"center", color:U.ink, fontWeight:700, fontSize:size*0.4, flexShrink:0 }}>
+    {name[0].toUpperCase()}
+  </div>
+);
+
+// ─── Pill button ───────────────────────────────────────────────────
+const Pill = ({ label, onPress, black, small }) => (
+  <button onClick={onPress} style={{ background:black?U.ink:U.soft, color:black?"#fff":U.ink, border:"none", borderRadius:999, padding:small?"8px 16px":"14px 24px", fontSize:small?13:15, fontWeight:700, cursor:"pointer", fontFamily:"inherit", whiteSpace:"nowrap" }}>
+    {label}
+  </button>
+);
+
+// ─── Bottom sheet ──────────────────────────────────────────────────
+function Sheet({ open, onClose, title, children }) {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    if (open) requestAnimationFrame(()=>requestAnimationFrame(()=>setShow(true)));
+    else setShow(false);
+  }, [open]);
+  if (!open && !show) return null;
+  return (
+    <div onClick={()=>{setShow(false);setTimeout(onClose,300);}} style={{ position:"fixed",inset:0,zIndex:500,display:"flex",flexDirection:"column",justifyContent:"flex-end" }}>
+      <div style={{ position:"absolute",inset:0,background:`rgba(0,0,0,${show?0.45:0})`,transition:"background 0.3s" }} />
+      <div onClick={e=>e.stopPropagation()} style={{ position:"relative",background:U.canvas,borderRadius:"20px 20px 0 0",maxHeight:"90vh",overflowY:"auto",transform:show?"translateY(0)":"translateY(100%)",transition:"transform 0.32s cubic-bezier(0.32,0.72,0,1)" }}>
+        <div style={{ width:40,height:4,borderRadius:2,background:U.border,margin:"12px auto 0" }} />
+        {title && <>
+          <p style={{ ...txt(T.h3), padding:"16px 20px 0" }}>{title}</p>
+          <Div />
+        </>}
+        {children}
+        <div style={{ height:40 }} />
+      </div>
+    </div>
+  );
+}
+
+// ─── Input ─────────────────────────────────────────────────────────
+const Inp = ({ label, value, onChange, placeholder, type="text", hint }) => (
+  <div>
+    {label && <p style={{ ...txt(T.tiny), marginBottom:S.xs }}>{label.toUpperCase()}</p>}
+    <input value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} type={type}
+      style={{ width:"100%",background:U.soft,border:`1.5px solid ${U.border}`,borderRadius:12,padding:"13px 14px",color:U.ink,fontSize:15,outline:"none",boxSizing:"border-box",fontFamily:"inherit",fontWeight:400 }}
+      onFocus={e=>e.target.style.borderColor=U.ink}
+      onBlur={e=>e.target.style.borderColor=U.border}
+    />
+    {hint && <p style={{ ...txt(T.sub), marginTop:4, color:U.inkMuted }}>{hint}</p>}
+  </div>
+);
+
+// ─── Category picker ───────────────────────────────────────────────
+const CatPicker = ({ open, current, onSelect, onClose }) => (
   <Sheet open={open} onClose={onClose} title="Category">
-    <div style={{padding:"12px 16px",display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-      {ALL_CATS.map(cat=>(
-        <button key={cat} onClick={()=>{haptic();onSelect(cat);}} style={{background:current===cat?CAT_COLOR[cat]+"18":C.bg,border:`1.5px solid ${current===cat?CAT_COLOR[cat]:C.border}`,borderRadius:14,padding:"14px",cursor:"pointer",display:"flex",alignItems:"center",gap:10,transition:"all 0.15s"}}>
-          <span style={{fontSize:20}}>{CAT_EMOJI[cat]}</span>
-          <span style={{color:current===cat?CAT_COLOR[cat]:C.text,fontSize:14,fontWeight:current===cat?700:500}}>{cat}</span>
-        </button>
+    <div style={{ padding:"12px 0" }}>
+      {CAT.map((cat,i) => (
+        <div key={cat}>
+          <button onClick={()=>{onSelect(cat);}} style={{ width:"100%",background:"none",border:"none",padding:"14px 20px",display:"flex",alignItems:"center",gap:14,cursor:"pointer",fontFamily:"inherit" }}>
+            <Icon emoji={CAT_E[cat]} color={CAT_C[cat]} size={40} />
+            <p style={{ ...txt(T.body), flex:1 }}>{cat}</p>
+            {current===cat && <span style={{ color:U.ink, fontSize:18 }}>✓</span>}
+          </button>
+          {i<CAT.length-1 && <Div indent={74} />}
+        </div>
       ))}
     </div>
   </Sheet>
 );
 
-// ── Name editor ───────────────────────────────────────────────────
-const NameEditor=({open,current,suggestion,onSave,onClose})=>{
-  const [val,setVal]=useState(current||suggestion||"");
-  useEffect(()=>{if(open)setVal(current||suggestion||"");},[open,current,suggestion]);
-  return(
+// ─── Name editor ───────────────────────────────────────────────────
+const NameEditor = ({ open, current, onSave, onClose }) => {
+  const [v, setV] = useState(current||"");
+  useEffect(()=>{ if(open) setV(current||""); },[open,current]);
+  return (
     <Sheet open={open} onClose={onClose} title="Edit name">
-      <div style={{padding:"16px 20px"}}>
-        <p style={{color:C.textSub,fontSize:13,margin:"0 0 12px"}}>AI suggested name — edit if needed</p>
-        <input value={val} onChange={e=>setVal(e.target.value)} style={{width:"100%",background:C.bg,border:`1.5px solid ${C.accent}`,borderRadius:12,padding:"14px",color:C.text,fontSize:16,fontWeight:500,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
-        <button onClick={()=>{onSave(val.trim()||current);onClose();}} style={{width:"100%",background:C.accent,border:"none",color:"#fff",borderRadius:12,padding:"14px",fontSize:15,fontWeight:700,cursor:"pointer",marginTop:12}}>Save</button>
+      <div style={{ padding:"16px 20px",display:"flex",flexDirection:"column",gap:S.md }}>
+        <Inp value={v} onChange={setV} placeholder="e.g. Zahav" />
+        <Pill black label="Save" onPress={()=>{ onSave(v.trim()||current); onClose(); }} />
       </div>
     </Sheet>
   );
 };
 
-// ── Split sheet ───────────────────────────────────────────────────
-const SplitSheet=({open,onClose,onSave,transactions,preSelectedTxId=null})=>{
-  const [mode,setMode]=useState(preSelectedTxId?"tx":"manual");
-  const [txId,setTxId]=useState(preSelectedTxId);
-  const [merchant,setMerchant]=useState("");
-  const [total,setTotal]=useState("");
-  const [myAmt,setMyAmt]=useState("");
-  const [people,setPeople]=useState([]);
-  const [newName,setNewName]=useState("");
-  const [addingPerson,setAddingPerson]=useState(false);
-  const PRESETS=["Riya","Dev","Priya","Sam","Zara"];
-  const allPeople=[...new Set([...PRESETS,...people])];
+// ─── Split sheet ───────────────────────────────────────────────────
+const SplitSheet = ({ open, onClose, onSave, transactions, preId=null }) => {
+  const [mode, setMode] = useState("tx");
+  const [txId, setTxId] = useState(preId);
+  const [merchant, setMerchant] = useState("");
+  const [total, setTotal] = useState("");
+  const [myAmt, setMyAmt] = useState("");
+  const [people, setPeople] = useState([]);
+  const [newName, setNewName] = useState("");
+  const [addingPerson, setAddingPerson] = useState(false);
 
-  const selTx=transactions.find(t=>t.id===txId);
+  const PRESETS = ["Riya","Dev","Priya","Sam","Zara"];
+  const allPeople = [...new Set([...PRESETS,...people])];
+  const selTx = transactions.find(t=>t.id===txId);
 
-  // Auto-fill myAmt when tx selected and people change
+  // Auto-fill myAmt as equal share when tx + people change
   useEffect(()=>{
-    if(selTx&&people.length>0){
-      const share=(selTx.total/(people.length+1));
-      setMyAmt(share.toFixed(2));
+    if(selTx && people.length>0) {
+      setMyAmt((selTx.total/(people.length+1)).toFixed(2));
     }
-  },[txId,people.length]);
+  },[txId, people.length]);
 
   useEffect(()=>{
-    if(open){setMode(preSelectedTxId?"tx":"manual");setTxId(preSelectedTxId);setPeople([]);setMyAmt("");setMerchant("");setTotal("");}
-  },[open,preSelectedTxId]);
+    if(open){ setMode(preId?"tx":"tx"); setTxId(preId); setPeople([]); setMyAmt(""); setMerchant(""); setTotal(""); setAddingPerson(false); setNewName(""); }
+  },[open,preId]);
 
-  const effTotal=mode==="tx"?(selTx?.total||0):parseFloat(total)||0;
-  const effMy=parseFloat(myAmt)||0;
-  const perPerson=people.length>0?((effTotal-effMy)/people.length):0;
-  const valid=(mode==="tx"?!!selTx:!!(merchant.trim()&&effTotal>0))&&effMy>0&&people.length>0;
+  const effTotal = mode==="tx" ? (selTx?.total||0) : (parseFloat(total)||0);
+  const effMy = parseFloat(myAmt)||0;
+  const perPerson = people.length>0 ? (effTotal-effMy)/people.length : 0;
+  const valid = (mode==="tx"?!!selTx:!!(merchant.trim()&&effTotal>0)) && effMy>0 && people.length>0;
 
-  const inp={width:"100%",background:C.bg,border:`1.5px solid ${C.border}`,borderRadius:12,padding:"13px 14px",color:C.text,fontSize:15,outline:"none",boxSizing:"border-box",fontFamily:"inherit"};
-  const focusInp=(e)=>{e.target.style.borderColor=C.accent;};
-  const blurInp=(e)=>{e.target.style.borderColor=C.border;};
-
-  function submit(){
-    if(!valid) return; haptic();
-    const m=mode==="tx"?(selTx?.displayName||selTx?.merchant||""):merchant.trim();
-    const d=mode==="tx"?(selTx?.date||""):new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"});
-    onSave({merchant:m,date:d,total:effTotal,myShare:effMy,people,existingTxId:mode==="tx"?txId:null});
+  function submit() {
+    if(!valid) return;
+    const m = mode==="tx" ? (selTx?.displayName||selTx?.merchant||"") : merchant.trim();
+    const d = mode==="tx" ? (selTx?.date||"") : new Date().toLocaleDateString("en-US",{month:"short",day:"numeric"});
+    onSave({ merchant:m, date:d, total:effTotal, myShare:effMy, people, existingTxId:mode==="tx"?txId:null });
     onClose();
   }
 
-  return(
+  return (
     <Sheet open={open} onClose={onClose} title="New split">
-      <div style={{padding:"16px 20px",display:"flex",flexDirection:"column",gap:14}}>
+      <div style={{ padding:"0 20px 0", display:"flex", flexDirection:"column", gap:S.md }}>
         {/* Mode toggle */}
-        <div style={{display:"flex",background:C.bg,borderRadius:12,padding:3}}>
+        <div style={{ display:"flex", background:U.soft, borderRadius:12, padding:3, marginTop:S.md }}>
           {[["tx","From transactions"],["manual","Enter manually"]].map(([m,l])=>(
-            <button key={m} onClick={()=>setMode(m)} style={{flex:1,background:mode===m?C.card:"transparent",border:"none",borderRadius:10,padding:"9px",fontSize:13,fontWeight:mode===m?700:500,color:mode===m?C.text:C.textSub,cursor:"pointer",boxShadow:mode===m?"0 1px 4px rgba(0,0,0,0.1)":"none",transition:"all 0.15s"}}>{l}</button>
+            <button key={m} onClick={()=>setMode(m)} style={{ flex:1,background:mode===m?U.canvas:"transparent",border:"none",borderRadius:10,padding:"9px",fontSize:13,fontWeight:mode===m?700:400,color:mode===m?U.ink:U.inkSub,cursor:"pointer",fontFamily:"inherit",boxShadow:mode===m?"0 1px 3px rgba(0,0,0,0.1)":"none",transition:"all 0.15s" }}>
+              {l}
+            </button>
           ))}
         </div>
 
-        {mode==="tx"?(
+        {mode==="tx" ? (
           <div>
-            <p style={{color:C.textSub,fontSize:12,fontWeight:600,letterSpacing:"0.05em",margin:"0 0 8px"}}>TRANSACTION</p>
-            <div style={{display:"flex",flexDirection:"column",gap:6,maxHeight:180,overflowY:"auto",borderRadius:12,border:`1px solid ${C.border}`,overflow:"hidden"}}>
-              {transactions.filter(t=>t.total>0).slice(0,25).map((t,i)=>(
-                <button key={t.id} onClick={()=>{setTxId(t.id);}} style={{background:txId===t.id?C.accentDim:C.card,border:"none",borderBottom:`1px solid ${C.border}`,padding:"12px 16px",cursor:"pointer",display:"flex",justifyContent:"space-between",alignItems:"center",transition:"background 0.15s"}}>
-                  <div style={{textAlign:"left"}}>
-                    <p style={{color:C.text,fontSize:14,fontWeight:500,margin:"0 0 2px"}}>{t.displayName||t.merchant}</p>
-                    <p style={{color:C.textMuted,fontSize:12,margin:0}}>{t.date}</p>
-                  </div>
-                  <span style={{color:txId===t.id?C.accent:C.text,fontSize:14,fontWeight:700}}>${t.total.toFixed(2)}</span>
-                </button>
+            <p style={{ ...txt(T.tiny), marginBottom:S.sm }}>SELECT TRANSACTION</p>
+            <div style={{ border:`1px solid ${U.border}`, borderRadius:12, overflow:"hidden", maxHeight:220, overflowY:"auto" }}>
+              {transactions.filter(t=>t.total>0).slice(0,30).map((t,i)=>(
+                <div key={t.id}>
+                  {i>0 && <Div indent={56} />}
+                  <button onClick={()=>setTxId(t.id)} style={{ width:"100%",background:txId===t.id?U.soft:U.canvas,border:"none",padding:"12px 14px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",fontFamily:"inherit" }}>
+                    <div style={{ textAlign:"left" }}>
+                      <p style={{ ...txt(T.body), marginBottom:2 }}>{t.displayName||t.merchant}</p>
+                      <p style={{ ...txt(T.sub) }}>{t.date}</p>
+                    </div>
+                    <p style={{ ...txt(T.num), color:txId===t.id?U.ink:U.inkSub }}>${t.total.toFixed(2)}</p>
+                  </button>
+                </div>
               ))}
             </div>
           </div>
-        ):(
+        ) : (
           <>
-            <div><p style={{color:C.textSub,fontSize:12,fontWeight:600,letterSpacing:"0.05em",margin:"0 0 6px"}}>MERCHANT</p>
-              <input style={inp} placeholder="Zahav" value={merchant} onChange={e=>setMerchant(e.target.value)} onFocus={focusInp} onBlur={blurInp}/></div>
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
-              <div><p style={{color:C.textSub,fontSize:12,fontWeight:600,letterSpacing:"0.05em",margin:"0 0 6px"}}>TOTAL BILL</p>
-                <input style={inp} placeholder="0.00" type="number" value={total} onChange={e=>setTotal(e.target.value)} onFocus={focusInp} onBlur={blurInp}/></div>
-              <div><p style={{color:C.textSub,fontSize:12,fontWeight:600,letterSpacing:"0.05em",margin:"0 0 6px"}}>MY SHARE</p>
-                <input style={inp} placeholder="0.00" type="number" value={myAmt} onChange={e=>setMyAmt(e.target.value)} onFocus={focusInp} onBlur={blurInp}/></div>
+            <Inp label="Merchant" value={merchant} onChange={setMerchant} placeholder="e.g. Zahav" />
+            <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:S.sm }}>
+              <Inp label="Total bill" value={total} onChange={setTotal} placeholder="0.00" type="number" />
+              <Inp label="My share" value={myAmt} onChange={setMyAmt} placeholder="0.00" type="number" />
             </div>
           </>
         )}
 
         {/* People */}
         <div>
-          <p style={{color:C.textSub,fontSize:12,fontWeight:600,letterSpacing:"0.05em",margin:"0 0 8px"}}>SPLIT WITH</p>
-          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-            {allPeople.map(p=>{
-              const on=people.includes(p);
-              return(
-                <button key={p} onClick={()=>{haptic();setPeople(prev=>on?prev.filter(x=>x!==p):[...prev,p]);}} style={{display:"flex",alignItems:"center",gap:6,background:on?C.accentDim:C.bg,border:`1.5px solid ${on?C.accent:C.border}`,borderRadius:20,padding:"7px 14px",cursor:"pointer",transition:"all 0.15s"}}>
-                  <span style={{width:24,height:24,borderRadius:"50%",background:on?C.accent:"#E5E7EB",display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:on?"#fff":C.textSub}}>{p[0]}</span>
-                  <span style={{color:on?C.accent:C.text,fontSize:13,fontWeight:on?700:400}}>{p}</span>
+          <p style={{ ...txt(T.tiny), marginBottom:S.sm }}>SPLIT WITH</p>
+          <div style={{ display:"flex", flexWrap:"wrap", gap:S.sm }}>
+            {allPeople.map(p => {
+              const on = people.includes(p);
+              return (
+                <button key={p} onClick={()=>setPeople(prev=>on?prev.filter(x=>x!==p):[...prev,p])} style={{ display:"flex",alignItems:"center",gap:6,background:on?U.ink:U.soft,border:"none",borderRadius:999,padding:"8px 14px",cursor:"pointer",fontFamily:"inherit",transition:"all 0.15s" }}>
+                  <span style={{ width:22,height:22,borderRadius:"50%",background:on?"rgba(255,255,255,0.2)":U.pressed,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:on?"#fff":U.ink }}>{p[0]}</span>
+                  <span style={{ color:on?"#fff":U.ink, fontSize:13, fontWeight:on?700:400 }}>{p}</span>
                 </button>
               );
             })}
-            <button onClick={()=>setAddingPerson(true)} style={{display:"flex",alignItems:"center",gap:6,background:C.bg,border:`1.5px dashed ${C.border}`,borderRadius:20,padding:"7px 14px",cursor:"pointer",color:C.textMuted,fontSize:13}}>+ Add</button>
+            <button onClick={()=>setAddingPerson(true)} style={{ background:U.soft,border:`1px dashed ${U.border}`,borderRadius:999,padding:"8px 14px",cursor:"pointer",color:U.inkMuted,fontSize:13,fontFamily:"inherit" }}>+ Add</button>
           </div>
-          {addingPerson&&(
-            <div style={{display:"flex",gap:8,marginTop:10}}>
-              <input autoFocus style={{...inp,flex:1}} placeholder="Name" value={newName} onChange={e=>setNewName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&newName.trim()){setPeople(p=>[...new Set([...p,newName.trim()])]);setNewName("");setAddingPerson(false);}}} onFocus={focusInp} onBlur={blurInp}/>
-              <button onClick={()=>{if(newName.trim()){setPeople(p=>[...new Set([...p,newName.trim()])]);setNewName("");setAddingPerson(false);}}} style={{background:C.accent,border:"none",color:"#fff",borderRadius:12,padding:"0 16px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Add</button>
+          {addingPerson && (
+            <div style={{ display:"flex", gap:S.sm, marginTop:S.sm }}>
+              <input autoFocus value={newName} onChange={e=>setNewName(e.target.value)}
+                onKeyDown={e=>{ if(e.key==="Enter"&&newName.trim()){ setPeople(p=>[...new Set([...p,newName.trim()])]); setNewName(""); setAddingPerson(false); }}}
+                placeholder="Name" style={{ flex:1,background:U.soft,border:`1px solid ${U.border}`,borderRadius:10,padding:"11px 13px",color:U.ink,fontSize:14,outline:"none",fontFamily:"inherit" }}
+                onFocus={e=>e.target.style.borderColor=U.ink} onBlur={e=>e.target.style.borderColor=U.border}
+              />
+              <button onClick={()=>{ if(newName.trim()){ setPeople(p=>[...new Set([...p,newName.trim()])]); setNewName(""); setAddingPerson(false); }}} style={{ background:U.ink,border:"none",color:"#fff",borderRadius:10,padding:"0 16px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit" }}>Add</button>
             </div>
           )}
         </div>
 
-        {/* My share auto-fill */}
-        {(mode==="tx"?!!selTx:!!(merchant&&effTotal>0))&&(
-          <div>
-            <p style={{color:C.textSub,fontSize:12,fontWeight:600,letterSpacing:"0.05em",margin:"0 0 6px"}}>MY SHARE</p>
-            <input style={{...inp,borderColor:effMy>0?C.accent:C.border}} placeholder="0.00" type="number" value={myAmt} onChange={e=>setMyAmt(e.target.value)} onFocus={focusInp} onBlur={blurInp}/>
-            {people.length>0&&<p style={{color:C.textMuted,fontSize:12,margin:"4px 0 0"}}>Tip: equal split = ${effTotal>0?((effTotal/(people.length+1)).toFixed(2)):"—"} each</p>}
-          </div>
+        {/* My share — shown after tx selected, auto-filled */}
+        {mode==="tx" && selTx && (
+          <Inp label="My share" value={myAmt} onChange={setMyAmt} type="number"
+            hint={people.length>0 ? `Equal split = $${(selTx.total/(people.length+1)).toFixed(2)} each` : ""}
+            placeholder="0.00"
+          />
         )}
 
         {/* Summary */}
-        {valid&&(
-          <div style={{background:C.accentDim,borderRadius:14,padding:"14px 16px",border:`1px solid ${C.accent}30`}}>
-            <p style={{color:C.accent,fontSize:15,fontWeight:700,margin:"0 0 4px"}}>{people.length} {people.length===1?"person":"people"} owe you ${perPerson.toFixed(2)} each</p>
-            <p style={{color:C.textSub,fontSize:13,margin:0}}>Total ${effTotal.toFixed(2)} · You pay ${effMy.toFixed(2)} · They pay ${(effTotal-effMy).toFixed(2)}</p>
+        {valid && (
+          <div style={{ background:U.soft, borderRadius:12, padding:"14px 16px" }}>
+            <p style={{ ...txt(T.body), fontWeight:700, marginBottom:4 }}>{people.length} {people.length===1?"person":"people"} owe you ${perPerson.toFixed(2)} each</p>
+            <p style={{ ...txt(T.sub) }}>Total ${effTotal.toFixed(2)} · You pay ${effMy.toFixed(2)}</p>
           </div>
         )}
 
-        <button onClick={submit} disabled={!valid} style={{background:valid?C.accent:"#E5E7EB",border:"none",color:valid?"#fff":C.textMuted,borderRadius:14,padding:"16px",fontSize:16,fontWeight:700,cursor:valid?"pointer":"default",transition:"all 0.2s",marginTop:4}}>
-          Add split
-        </button>
+        <div style={{ paddingBottom:8 }}>
+          <Pill black={valid} label="Add split" onPress={submit} />
+        </div>
       </div>
     </Sheet>
   );
 };
 
-// ── Transaction detail sheet ──────────────────────────────────────
-const TxDetailSheet=({open,tx,onClose,onUpdateCategory,onUpdateName,onMarkSplit,onMarkSettled,onSplitSaved,transactions})=>{
-  const [catOpen,setCatOpen]=useState(false);
-  const [nameOpen,setNameOpen]=useState(false);
-  const [splitOpen,setSplitOpen]=useState(false);
-  if(!tx) return null;
-  const name=tx.displayName||tx.merchant;
-  return(
-    <>
-      <Sheet open={open} onClose={onClose} title={name}>
-        <div style={{padding:"0 0 8px"}}>
-          {/* Hero */}
-          <div style={{padding:"20px 20px 16px",display:"flex",alignItems:"center",gap:16}}>
-            <div style={{width:56,height:56,borderRadius:16,background:CAT_COLOR[tx.category]+"18",display:"flex",alignItems:"center",justifyContent:"center",fontSize:28}}>
-              {CAT_EMOJI[tx.category]||"💳"}
-            </div>
-            <div style={{flex:1}}>
-              <p style={{color:C.text,fontSize:20,fontWeight:700,margin:"0 0 2px"}}>{name}</p>
-              <p style={{color:C.textMuted,fontSize:13,margin:0}}>{tx.merchant !== name ? tx.merchant+" · ":""}{tx.date}</p>
-            </div>
-          </div>
-          <Divider/>
+// ─── Tx detail sheet ───────────────────────────────────────────────
+const TxDetail = ({ open, tx, onClose, onCat, onName, onSplit, onSettle, onSplitSaved, transactions }) => {
+  const [catOpen, setCatOpen] = useState(false);
+  const [nameOpen, setNameOpen] = useState(false);
+  const [splitOpen, setSplitOpen] = useState(false);
+  if (!tx) return null;
+  const name = tx.displayName || tx.merchant;
 
-          {/* Amounts */}
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,padding:"16px 20px"}}>
-            <div style={{background:C.bg,borderRadius:14,padding:"14px"}}>
-              <p style={{color:C.textMuted,fontSize:11,fontWeight:600,letterSpacing:"0.05em",margin:"0 0 4px"}}>CHARGED</p>
-              <p style={{color:C.text,fontSize:22,fontWeight:800,margin:0}}>${tx.total.toFixed(2)}</p>
-            </div>
-            <div style={{background:C.accentDim,borderRadius:14,padding:"14px",border:`1px solid ${C.accent}30`}}>
-              <p style={{color:C.textMuted,fontSize:11,fontWeight:600,letterSpacing:"0.05em",margin:"0 0 4px"}}>MY SHARE</p>
-              <p style={{color:C.accent,fontSize:22,fontWeight:800,margin:0}}>${tx.myShare.toFixed(2)}</p>
-            </div>
-          </div>
-          <Divider/>
-
-          {/* Actions list */}
-          <div style={{padding:"8px 0"}}>
-            {/* Category */}
-            <button onClick={()=>setCatOpen(true)} style={{width:"100%",background:"none",border:"none",padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-              <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <span style={{fontSize:20}}>{CAT_EMOJI[tx.category]||"💳"}</span>
-                <div style={{textAlign:"left"}}>
-                  <p style={{color:C.textMuted,fontSize:12,margin:"0 0 2px"}}>Category</p>
-                  <p style={{color:C.text,fontSize:15,fontWeight:600,margin:0}}>{tx.category||"Uncategorized"}</p>
-                </div>
-              </div>
-              <span style={{color:C.textMuted,fontSize:20}}>›</span>
-            </button>
-            <Divider/>
-            {/* Name */}
-            <button onClick={()=>setNameOpen(true)} style={{width:"100%",background:"none",border:"none",padding:"14px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-              <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <span style={{fontSize:20}}>✏️</span>
-                <div style={{textAlign:"left"}}>
-                  <p style={{color:C.textMuted,fontSize:12,margin:"0 0 2px"}}>Display name</p>
-                  <p style={{color:C.text,fontSize:15,fontWeight:600,margin:0}}>{name}</p>
-                </div>
-              </div>
-              <span style={{color:C.textMuted,fontSize:20}}>›</span>
-            </button>
-            <Divider/>
-            {/* Split info */}
-            {tx.split&&tx.people.length>0&&(
-              <>
-                <div style={{padding:"14px 20px"}}>
-                  <p style={{color:C.textMuted,fontSize:12,margin:"0 0 8px"}}>Split with</p>
-                  <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
-                    {tx.people.map(p=>(
-                      <div key={p} style={{display:"flex",alignItems:"center",gap:6,background:C.bg,borderRadius:20,padding:"6px 12px"}}>
-                        <span style={{width:22,height:22,borderRadius:"50%",background:C.accent,display:"flex",alignItems:"center",justifyContent:"center",fontSize:11,fontWeight:700,color:"#fff"}}>{p[0]}</span>
-                        <span style={{color:C.text,fontSize:13,fontWeight:500}}>{p}</span>
-                        <span style={{color:C.textMuted,fontSize:12}}>${((tx.total-tx.myShare)/tx.people.length).toFixed(2)}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <Divider/>
-              </>
-            )}
-          </div>
-
-          {/* CTA buttons */}
-          <div style={{padding:"8px 20px 0",display:"flex",flexDirection:"column",gap:10}}>
-            {!tx.split&&(
-              <button onClick={()=>{haptic();setSplitOpen(true);}} style={{width:"100%",background:C.accentDim,border:`1.5px solid ${C.accent}44`,color:C.accent,borderRadius:14,padding:"15px",fontSize:15,fontWeight:700,cursor:"pointer"}}>
-                Split this expense
-              </button>
-            )}
-            {tx.split&&!tx.settled&&(
-              <button onClick={()=>{haptic();onMarkSettled(tx.id);onClose();}} style={{width:"100%",background:"#F59E0B18",border:`1.5px solid ${C.yellow}44`,color:C.yellow,borderRadius:14,padding:"15px",fontSize:15,fontWeight:700,cursor:"pointer"}}>
-                ✓ Mark settled · via Zelle
-              </button>
-            )}
-            {tx.settled&&<p style={{textAlign:"center",color:C.accent,fontSize:14,fontWeight:600,margin:"4px 0"}}>✓ Settled</p>}
-          </div>
+  return (<>
+    <Sheet open={open} onClose={onClose} title={name}>
+      {/* Amounts */}
+      <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:S.sm, padding:`${S.md}px ${S.md}px` }}>
+        <div style={{ background:U.soft, borderRadius:12, padding:S.md }}>
+          <p style={{ ...txt(T.tiny), marginBottom:S.xs }}>CHARGED</p>
+          <p style={{ ...txt(T.bigNum) }}>${tx.total.toFixed(2)}</p>
         </div>
-      </Sheet>
+        <div style={{ background:U.soft, borderRadius:12, padding:S.md }}>
+          <p style={{ ...txt(T.tiny), marginBottom:S.xs }}>MY SHARE</p>
+          <p style={{ ...txt(T.bigNum) }}>${tx.myShare.toFixed(2)}</p>
+        </div>
+      </div>
+      <Div />
 
-      <CatPicker open={catOpen} current={tx.category} onSelect={cat=>{onUpdateCategory(tx.id,cat);setCatOpen(false);}} onClose={()=>setCatOpen(false)}/>
-      <NameEditor open={nameOpen} current={tx.displayName} suggestion={tx.merchant} onSave={name=>onUpdateName(tx.id,name)} onClose={()=>setNameOpen(false)}/>
-      <SplitSheet open={splitOpen} onClose={()=>setSplitOpen(false)} transactions={transactions} preSelectedTxId={tx.id} onSave={s=>{onSplitSaved(s);setSplitOpen(false);onClose();}}/>
-    </>
-  );
+      {/* Row list */}
+      {[
+        { label:"Category", value:tx.category||"—", icon:CAT_E[tx.category]||"💳", iconColor:CAT_C[tx.category]||U.grey, onPress:()=>setCatOpen(true) },
+        { label:"Display name", value:name, icon:"✏️", iconColor:U.grey, onPress:()=>setNameOpen(true) },
+      ].map((row,i)=>(
+        <div key={i}>
+          <button onClick={row.onPress} style={{ width:"100%",background:"none",border:"none",padding:"14px 20px",display:"flex",alignItems:"center",gap:14,cursor:"pointer",fontFamily:"inherit" }}>
+            <Icon emoji={row.icon} color={row.iconColor} size={40} />
+            <div style={{ flex:1, textAlign:"left" }}>
+              <p style={{ ...txt(T.tiny), marginBottom:3 }}>{row.label.toUpperCase()}</p>
+              <p style={{ ...txt(T.body) }}>{row.value}</p>
+            </div>
+            <span style={{ color:U.inkMuted, fontSize:20, lineHeight:1 }}>›</span>
+          </button>
+          <Div indent={74} />
+        </div>
+      ))}
+
+      {/* Split people */}
+      {tx.split && tx.people.length>0 && (
+        <>
+          <div style={{ padding:"14px 20px" }}>
+            <p style={{ ...txt(T.tiny), marginBottom:S.sm }}>SPLIT WITH</p>
+            <div style={{ display:"flex", gap:S.sm, flexWrap:"wrap" }}>
+              {tx.people.map(p=>(
+                <div key={p} style={{ display:"flex",alignItems:"center",gap:6,background:U.soft,borderRadius:999,padding:"6px 12px" }}>
+                  <Av name={p} size={22} />
+                  <span style={{ ...txt(T.sub) }}>{p}</span>
+                  <span style={{ ...txt(T.sub), color:U.inkMuted }}>${((tx.total-tx.myShare)/tx.people.length).toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+          <Div />
+        </>
+      )}
+
+      {/* CTAs */}
+      <div style={{ padding:`${S.md}px ${S.md}px 0`, display:"flex", flexDirection:"column", gap:S.sm }}>
+        {!tx.split && <Pill black label="Split this expense" onPress={()=>setSplitOpen(true)} />}
+        {tx.split&&!tx.settled && (
+          <button onClick={()=>{onSettle(tx.id);onClose();}} style={{ width:"100%",background:U.soft,border:"none",borderRadius:999,padding:"14px 24px",fontSize:15,fontWeight:700,cursor:"pointer",color:U.ink,fontFamily:"inherit" }}>
+            ✓ Mark settled via Zelle
+          </button>
+        )}
+        {tx.settled && <p style={{ textAlign:"center", ...txt(T.sub), paddingBottom:8 }}>✓ Settled</p>}
+      </div>
+    </Sheet>
+
+    <CatPicker open={catOpen} current={tx.category} onSelect={cat=>{onCat(tx.id,cat);setCatOpen(false);}} onClose={()=>setCatOpen(false)} />
+    <NameEditor open={nameOpen} current={name} onSave={n=>onName(tx.id,n)} onClose={()=>setNameOpen(false)} />
+    <SplitSheet open={splitOpen} onClose={()=>setSplitOpen(false)} transactions={transactions} preId={tx.id} onSave={s=>{onSplitSaved(s);setSplitOpen(false);onClose();}} />
+  </>);
 };
 
-// ── Import screen ─────────────────────────────────────────────────
-const ImportScreen=({onImport,onSkip})=>{
-  const [dragging,setDragging]=useState(false);
-  const [error,setError]=useState(null);
-  const [loading,setLoading]=useState(false);
-  const fileRef=useRef();
+// ─── Import screen ─────────────────────────────────────────────────
+const ImportScreen = ({ onImport }) => {
+  const [drag, setDrag] = useState(false);
+  const [err, setErr] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const ref = useRef();
 
-  function processFile(file){
-    if(!file){return;}
-    if(!file.name.toLowerCase().endsWith(".csv")){setError("Upload a .csv file from Chase");return;}
-    setLoading(true);setError(null);
-    const reader=new FileReader();
-    reader.onload=e=>{
-      try{
-        const txs=parseChaseCSV(e.target.result);
-        if(!txs.length){setError("No transactions found — check your Chase export");setLoading(false);return;}
+  function process(file) {
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".csv")) { setErr("Please select a .csv file"); return; }
+    setLoading(true); setErr(null);
+    const r = new FileReader();
+    r.onload = e => {
+      try {
+        const txs = parseCSV(e.target.result);
+        if (!txs.length) { setErr("No transactions found — re-export from Chase"); setLoading(false); return; }
         onImport(txs);
-      }catch{setError("Couldn't read this file — try re-exporting from Chase");setLoading(false);}
+      } catch { setErr("Couldn't read this file — try re-exporting"); setLoading(false); }
     };
-    reader.onerror=()=>{setError("File read error — try again");setLoading(false);};
-    reader.readAsText(file);
+    r.onerror = () => { setErr("Read error — try again"); setLoading(false); };
+    r.readAsText(file);
   }
 
-  return(
-    <div style={{minHeight:"100vh",background:C.card,display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:"32px 24px",fontFamily:"-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif"}}>
-      <div style={{width:"100%",maxWidth:360}}>
-        <div style={{width:80,height:80,borderRadius:24,background:C.accentDim,border:`2px solid ${C.accent}44`,display:"flex",alignItems:"center",justifyContent:"center",fontSize:36,margin:"0 auto 28px"}}>📊</div>
-        <h1 style={{color:C.text,fontSize:28,fontWeight:800,margin:"0 0 8px",textAlign:"center",letterSpacing:"-0.5px"}}>SplitTrack</h1>
-        <p style={{color:C.textSub,fontSize:15,textAlign:"center",margin:"0 0 36px",lineHeight:1.5}}>Import your Chase transactions and track exactly what you owe — and what you're owed.</p>
-
-        <div onDragOver={e=>{e.preventDefault();setDragging(true);}} onDragLeave={()=>setDragging(false)}
-          onDrop={e=>{e.preventDefault();setDragging(false);processFile(e.dataTransfer.files[0]);}}
-          onClick={()=>fileRef.current.click()}
-          style={{border:`2px dashed ${dragging?C.accent:C.border}`,borderRadius:20,padding:"36px 24px",cursor:"pointer",marginBottom:16,background:dragging?C.accentDim:C.bg,transition:"all 0.2s",textAlign:"center"}}>
-          {loading
-            ?<><p style={{color:C.accent,fontSize:16,fontWeight:600,margin:"0 0 4px"}}>Reading file…</p><p style={{color:C.textMuted,fontSize:13,margin:0}}>Just a moment</p></>
-            :<><p style={{fontSize:32,margin:"0 0 8px"}}>📂</p><p style={{color:dragging?C.accent:C.text,fontSize:16,fontWeight:600,margin:"0 0 4px"}}>Drop your Chase CSV</p><p style={{color:C.textMuted,fontSize:13,margin:0}}>or tap to browse</p></>}
-          <input ref={fileRef} type="file" accept=".csv,.CSV" style={{display:"none"}} onChange={e=>processFile(e.target.files[0])}/>
-        </div>
-
-        {error&&<div style={{background:C.redDim,border:`1px solid ${C.red}33`,borderRadius:12,padding:"12px 16px",marginBottom:16}}>
-          <p style={{color:C.red,fontSize:14,margin:0}}>{error}</p>
-        </div>}
-
-        <div style={{background:C.bg,borderRadius:16,padding:"16px",marginBottom:28}}>
-          <p style={{color:C.textSub,fontSize:12,fontWeight:700,letterSpacing:"0.06em",margin:"0 0 10px"}}>HOW TO EXPORT FROM CHASE</p>
-          {["chase.com → your account → Activity","Click Download → CSV","Select date range → Download"].map((s,i)=>(
-            <div key={i} style={{display:"flex",gap:10,marginBottom:i<2?8:0}}>
-              <span style={{width:22,height:22,borderRadius:"50%",background:C.accent,color:"#fff",fontSize:12,fontWeight:700,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>{i+1}</span>
-              <p style={{color:C.textSub,fontSize:13,margin:"2px 0 0"}}>{s}</p>
-            </div>
-          ))}
-        </div>
-
-        <button onClick={onSkip} style={{width:"100%",background:"none",border:"none",color:C.textMuted,fontSize:14,cursor:"pointer",textDecoration:"underline"}}>Try with demo data first</button>
+  // Full-screen, no scroll, fixed layout
+  return (
+    <div style={{ position:"fixed", inset:0, background:U.canvas, display:"flex", flexDirection:"column", fontFamily:"-apple-system,'SF Pro Text',sans-serif" }}>
+      {/* Top section */}
+      <div style={{ flex:1, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", padding:`0 ${S.lg}px` }}>
+        <div style={{ width:72, height:72, borderRadius:20, background:U.soft, display:"flex", alignItems:"center", justifyContent:"center", fontSize:36, marginBottom:S.lg }}>📊</div>
+        <h1 style={{ ...txt(T.h1), textAlign:"center", marginBottom:S.sm }}>SplitTrack</h1>
+        <p style={{ ...txt(T.sub), textAlign:"center", lineHeight:1.5, maxWidth:280 }}>Import your Chase transactions. Track what you spend and what you're owed.</p>
       </div>
+
+      {/* Drop zone */}
+      <div style={{ padding:`0 ${S.lg}px`, marginBottom:S.md }}>
+        <div onDragOver={e=>{e.preventDefault();setDrag(true);}} onDragLeave={()=>setDrag(false)}
+          onDrop={e=>{e.preventDefault();setDrag(false);process(e.dataTransfer.files[0]);}}
+          onClick={()=>ref.current.click()}
+          style={{ border:`2px dashed ${drag?U.ink:U.border}`, borderRadius:16, padding:"28px 24px", cursor:"pointer", background:drag?U.soft:U.canvas, transition:"all 0.2s", textAlign:"center" }}>
+          {loading
+            ? <p style={{ ...txt(T.body), fontWeight:700 }}>Reading file…</p>
+            : <>
+                <p style={{ ...txt(T.body), fontWeight:700, marginBottom:4 }}>{drag?"Drop it!":"Drop your Chase CSV here"}</p>
+                <p style={{ ...txt(T.sub) }}>or tap to browse</p>
+              </>}
+          <input ref={ref} type="file" accept=".csv,.CSV" style={{ display:"none" }} onChange={e=>process(e.target.files[0])} />
+        </div>
+        {err && <p style={{ ...txt(T.sub), color:U.red, marginTop:S.sm, textAlign:"center" }}>{err}</p>}
+      </div>
+
+      {/* How to export */}
+      <div style={{ margin:`0 ${S.lg}px ${S.md}px`, background:U.soft, borderRadius:16, padding:`${S.md}px` }}>
+        <p style={{ ...txt(T.tiny), marginBottom:S.sm }}>HOW TO EXPORT FROM CHASE</p>
+        {["chase.com → your account → Activity","Click Download → CSV","Pick a date range → Download"].map((s,i)=>(
+          <div key={i} style={{ display:"flex", gap:S.sm, marginBottom:i<2?8:0 }}>
+            <span style={{ width:22, height:22, borderRadius:"50%", background:U.ink, color:"#fff", fontSize:11, fontWeight:700, display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>{i+1}</span>
+            <p style={{ ...txt(T.sub), marginTop:2 }}>{s}</p>
+          </div>
+        ))}
+      </div>
+
+      {/* Bottom safe area */}
+      <div style={{ height:40 }} />
     </div>
   );
 };
 
-// ── Bottom nav ────────────────────────────────────────────────────
-const BottomNav=({active,setActive})=>{
-  const tabs=[{id:"dashboard",icon:"⊟",label:"Overview"},{id:"transactions",icon:"≡",label:"Activity"},{id:"splits",icon:"⊕",label:"Splits"},{id:"settings",icon:"○",label:"More"}];
-  return(
-    <div style={{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:430,background:"rgba(255,255,255,0.94)",backdropFilter:"blur(20px)",borderTop:`1px solid ${C.border}`,display:"flex",justifyContent:"space-around",alignItems:"center",paddingBottom:28,paddingTop:10,zIndex:50}}>
+// ─── Bottom nav ────────────────────────────────────────────────────
+const Nav = ({ tab, setTab }) => {
+  const tabs = [
+    { id:"dashboard", icon:"⊟", label:"Overview" },
+    { id:"transactions", icon:"≡",  label:"Activity"  },
+    { id:"splits",       icon:"⊕",  label:"Splits"    },
+    { id:"settings",     icon:"○",  label:"More"      },
+  ];
+  return (
+    <div style={{ position:"fixed", bottom:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:430, background:U.canvas, borderTop:`1px solid ${U.border}`, display:"flex", zIndex:100 }}>
       {tabs.map(t=>(
-        <button key={t.id} onClick={()=>{haptic();setActive(t.id);}} style={{background:"none",border:"none",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:3,color:active===t.id?C.accent:C.textMuted,padding:"4px 16px",minWidth:60,transition:"color 0.15s"}}>
-          <span style={{fontSize:22,lineHeight:1}}>{t.icon}</span>
-          <span style={{fontSize:10,fontWeight:active===t.id?700:500,letterSpacing:"0.03em"}}>{t.label}</span>
+        <button key={t.id} onClick={()=>setTab(t.id)} style={{ flex:1, background:"none", border:"none", cursor:"pointer", padding:"10px 0 28px", display:"flex", flexDirection:"column", alignItems:"center", gap:3, color:tab===t.id?U.ink:U.inkMuted, fontFamily:"inherit", transition:"color 0.15s" }}>
+          <span style={{ fontSize:22, lineHeight:1 }}>{t.icon}</span>
+          <span style={{ fontSize:10, fontWeight:tab===t.id?700:400, letterSpacing:"0.02em" }}>{t.label}</span>
         </button>
       ))}
     </div>
   );
 };
 
-// ── Dashboard ─────────────────────────────────────────────────────
-const Dashboard=({transactions,splits,setTab,onReimport})=>{
-  const totalCharged=transactions.reduce((s,t)=>s+t.total,0);
-  const myRealSpend=transactions.reduce((s,t)=>s+t.myShare,0);
-  const pending=splits.filter(s=>!s.settled);
-  const totalOwed=pending.reduce((s,t)=>s+t.amount,0);
-  const byPerson=pending.reduce((acc,s)=>{if(!acc[s.person])acc[s.person]={person:s.person,total:0,n:0};acc[s.person].total+=s.amount;acc[s.person].n++;return acc;},{});
-  const savings=totalCharged-myRealSpend;
+// ─── Dashboard ─────────────────────────────────────────────────────
+const Dashboard = ({ txs, splits, setTab, onImport }) => {
+  const total   = txs.reduce((s,t)=>s+t.total,0);
+  const mySpend = txs.reduce((s,t)=>s+t.myShare,0);
+  const owed    = splits.filter(s=>!s.settled).reduce((s,t)=>s+t.amount,0);
+  const byP     = splits.filter(s=>!s.settled).reduce((a,s)=>{if(!a[s.person])a[s.person]={p:s.person,n:0,t:0};a[s.person].t+=s.amount;a[s.person].n++;return a;},{});
+  const savings = total - mySpend;
 
-  return(
-    <div style={{padding:"0 0 100px",background:C.bg,minHeight:"100vh"}}>
+  return (
+    <div style={{ position:"fixed", top:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:430, bottom:82, overflowY:"auto", background:U.soft }}>
       {/* Header */}
-      <div style={{background:C.card,padding:"20px 20px 24px",marginBottom:8}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:20}}>
-          <div>
-            <p style={{color:C.textMuted,fontSize:12,fontWeight:600,letterSpacing:"0.06em",margin:"0 0 4px"}}>{new Date().toLocaleDateString("en-US",{month:"long",year:"numeric"}).toUpperCase()}</p>
-            <h1 style={{color:C.text,fontSize:26,fontWeight:800,margin:0,letterSpacing:"-0.5px"}}>Overview</h1>
-          </div>
-          <button onClick={onReimport} style={{background:C.bg,border:`1px solid ${C.border}`,color:C.textSub,fontSize:13,fontWeight:600,padding:"8px 14px",borderRadius:20,cursor:"pointer"}}>Import</button>
+      <div style={{ background:U.canvas, padding:`${S.lg+4}px ${S.md}px ${S.md}px` }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:S.lg }}>
+          <h1 style={{ ...txt(T.h1) }}>Overview</h1>
+          <button onClick={onImport} style={{ background:U.soft, border:`1px solid ${U.border}`, color:U.ink, borderRadius:999, padding:"8px 16px", fontSize:13, fontWeight:700, cursor:"pointer", fontFamily:"inherit" }}>Import</button>
         </div>
-        {/* Spend hero */}
-        <div style={{background:`linear-gradient(135deg,${C.accent},#16a34a)`,borderRadius:20,padding:"24px"}}>
-          <p style={{color:"rgba(255,255,255,0.7)",fontSize:12,fontWeight:600,letterSpacing:"0.06em",margin:"0 0 6px"}}>MY REAL SPEND</p>
-          <p style={{color:"#fff",fontSize:40,fontWeight:800,margin:"0 0 4px",letterSpacing:"-1px"}}>${myRealSpend.toFixed(2)}</p>
-          <p style={{color:"rgba(255,255,255,0.65)",fontSize:13,margin:"0 0 14px"}}>of ${totalCharged.toFixed(2)} charged{savings>0?` · saving $${savings.toFixed(2)}`:""}</p>
-          <div style={{background:"rgba(255,255,255,0.2)",borderRadius:6,height:4}}>
-            <div style={{width:`${Math.min((myRealSpend/(totalCharged||1))*100,100)}%`,background:"rgba(255,255,255,0.9)",borderRadius:6,height:4,transition:"width 0.8s ease"}}/>
+        {/* Spend block */}
+        <div style={{ background:U.ink, borderRadius:16, padding:`${S.lg}px ${S.md}px ${S.md}px` }}>
+          <p style={{ ...txt(T.tiny), color:"rgba(255,255,255,0.5)", marginBottom:S.xs }}>MY REAL SPEND</p>
+          <p style={{ fontSize:42, fontWeight:700, color:"#fff", letterSpacing:-1, margin:`0 0 ${S.xs}px`, fontFamily:"-apple-system,sans-serif" }}>${mySpend.toFixed(2)}</p>
+          <p style={{ ...txt(T.sub), color:"rgba(255,255,255,0.5)" }}>of ${total.toFixed(2)} charged{savings>0?` · $${savings.toFixed(2)} covered by splits`:""}</p>
+          <div style={{ marginTop:S.md, background:"rgba(255,255,255,0.15)", borderRadius:6, height:3 }}>
+            <div style={{ width:`${Math.min((mySpend/(total||1))*100,100)}%`, background:"#fff", borderRadius:6, height:3 }} />
           </div>
         </div>
       </div>
 
-      {/* Owed card */}
-      <div onClick={()=>setTab("splits")} style={{background:C.card,margin:"0 0 8px",padding:"20px",cursor:"pointer"}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+      {/* Owed */}
+      <div style={{ height:S.sm }} />
+      <div onClick={()=>setTab("splits")} style={{ background:U.canvas, cursor:"pointer" }}>
+        <div style={{ padding:`${S.md}px`, display:"flex", justifyContent:"space-between", alignItems:"center" }}>
           <div>
-            <p style={{color:C.textMuted,fontSize:12,fontWeight:600,letterSpacing:"0.06em",margin:"0 0 4px"}}>OWED TO YOU</p>
-            <p style={{color:C.yellow,fontSize:30,fontWeight:800,margin:0,letterSpacing:"-0.5px"}}>${totalOwed.toFixed(2)}</p>
+            <p style={{ ...txt(T.tiny), marginBottom:S.xs }}>OWED TO YOU</p>
+            <p style={{ fontSize:32, fontWeight:700, letterSpacing:-0.5, margin:0, fontFamily:"-apple-system,sans-serif" }}>${owed.toFixed(2)}</p>
           </div>
-          <div style={{textAlign:"right"}}>
-            <p style={{color:C.textMuted,fontSize:12,fontWeight:600,letterSpacing:"0.06em",margin:"0 0 4px"}}>PEOPLE</p>
-            <p style={{color:C.text,fontSize:30,fontWeight:800,margin:0}}>{Object.keys(byPerson).length}</p>
+          <div style={{ textAlign:"right" }}>
+            <p style={{ ...txt(T.tiny), marginBottom:S.xs }}>PEOPLE</p>
+            <p style={{ fontSize:32, fontWeight:700, letterSpacing:-0.5, margin:0, fontFamily:"-apple-system,sans-serif" }}>{Object.keys(byP).length}</p>
           </div>
         </div>
-        {Object.keys(byPerson).length>0&&<div style={{marginTop:16,display:"flex",flexDirection:"column",gap:0}}>
-          {Object.values(byPerson).map((p,i)=>(
-            <div key={p.person}>
-              {i>0&&<Divider/>}
-              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",paddingTop:i>0?12:0,paddingBottom:i<Object.keys(byPerson).length-1?12:0}}>
-                <div style={{display:"flex",alignItems:"center",gap:10}}>
-                  <Avatar name={p.person} size={32} color={C.accent}/>
-                  <p style={{color:C.text,fontSize:15,fontWeight:500,margin:0}}>{p.person}</p>
-                </div>
-                <p style={{color:C.yellow,fontSize:15,fontWeight:700,margin:0}}>${p.total.toFixed(2)}</p>
+        {Object.keys(byP).length>0 && <>
+          <Div />
+          {Object.values(byP).map((p,i)=>(
+            <div key={p.p}>
+              {i>0&&<Div indent={56} />}
+              <div style={{ padding:"12px 16px", display:"flex", alignItems:"center", gap:14 }}>
+                <Av name={p.p} size={32} />
+                <p style={{ ...txt(T.body), flex:1 }}>{p.p}</p>
+                <p style={{ ...txt(T.num) }}>${p.t.toFixed(2)}</p>
               </div>
             </div>
           ))}
-        </div>}
+        </>}
       </div>
 
       {/* Categories */}
-      <div style={{background:C.card,margin:"0 0 8px",padding:"20px"}}>
-        <p style={{color:C.textMuted,fontSize:12,fontWeight:600,letterSpacing:"0.06em",margin:"0 0 14px"}}>BY CATEGORY</p>
-        {ALL_CATS.map(cat=>{
-          const spend=transactions.filter(t=>t.category===cat).reduce((s,t)=>s+t.myShare,0);
+      <div style={{ height:S.sm }} />
+      <div style={{ background:U.canvas, padding:`${S.md}px` }}>
+        <p style={{ ...txt(T.tiny), marginBottom:S.md }}>SPENDING BY CATEGORY</p>
+        {CAT.map(cat=>{
+          const spend = txs.filter(t=>t.category===cat).reduce((s,t)=>s+t.myShare,0);
           if(!spend) return null;
-          return(
-            <div key={cat} style={{display:"flex",alignItems:"center",gap:12,marginBottom:12}}>
-              <span style={{fontSize:18,flexShrink:0}}>{CAT_EMOJI[cat]}</span>
-              <p style={{color:C.textSub,fontSize:14,margin:0,flex:1}}>{cat}</p>
-              <div style={{flex:2,background:C.bg,borderRadius:4,height:6}}>
-                <div style={{width:`${(spend/(myRealSpend||1))*100}%`,background:CAT_COLOR[cat],borderRadius:4,height:6,transition:"width 0.6s ease"}}/>
+          return (
+            <div key={cat} style={{ display:"flex", alignItems:"center", gap:12, marginBottom:12 }}>
+              <span style={{ fontSize:20, flexShrink:0 }}>{CAT_E[cat]}</span>
+              <p style={{ ...txt(T.sub), flex:1 }}>{cat}</p>
+              <div style={{ flex:2, background:U.soft, borderRadius:3, height:4 }}>
+                <div style={{ width:`${(spend/(mySpend||1))*100}%`, background:CAT_C[cat], borderRadius:3, height:4 }} />
               </div>
-              <p style={{color:C.text,fontSize:14,fontWeight:700,margin:0,minWidth:52,textAlign:"right"}}>${spend.toFixed(0)}</p>
+              <p style={{ ...txt(T.num), minWidth:52, textAlign:"right" }}>${spend.toFixed(0)}</p>
             </div>
           );
         })}
-        {!transactions.length&&<div style={{textAlign:"center",padding:"24px 0"}}>
-          <p style={{color:C.textMuted,fontSize:14,margin:"0 0 12px"}}>No transactions yet</p>
-          <button onClick={onReimport} style={{background:C.accentDim,border:`1px solid ${C.accent}44`,color:C.accent,borderRadius:12,padding:"10px 20px",fontSize:14,fontWeight:600,cursor:"pointer"}}>Import CSV</button>
-        </div>}
+        {!txs.length && <p style={{ ...txt(T.sub), textAlign:"center", padding:`${S.lg}px 0` }}>No transactions yet. Import your Chase CSV.</p>}
       </div>
+      <div style={{ height:S.sm }} />
     </div>
   );
 };
 
-// ── Activity ──────────────────────────────────────────────────────
-const Activity=({transactions,setTransactions,categorizing,onReimport,onSplitSaved})=>{
-  const [filter,setFilter]=useState("all");
-  const [search,setSearch]=useState("");
-  const [detailTx,setDetailTx]=useState(null);
-  const [splitTxId,setSplitTxId]=useState(null);
+// ─── Activity ──────────────────────────────────────────────────────
+const Activity = ({ txs, setTxs, categorizing, onImport, onSplitSaved }) => {
+  const [filter, setFilter] = useState("all");
+  const [search, setSearch] = useState("");
+  const [detailId, setDetailId] = useState(null);
+  const [splitId, setSplitId] = useState(null);
 
-  function updateCat(id,cat){setTransactions(prev=>prev.map(t=>t.id===id?{...t,category:cat}:t));}
-  function updateName(id,name){setTransactions(prev=>prev.map(t=>t.id===id?{...t,displayName:name}:t));}
-  function markSplit(id){setSplitTxId(id);}
-  function markSettled(id){setTransactions(prev=>prev.map(t=>t.id===id?{...t,settled:true}:t));}
+  const upCat  = (id,c) => setTxs(p=>p.map(t=>t.id===id?{...t,category:c}:t));
+  const upName = (id,n) => setTxs(p=>p.map(t=>t.id===id?{...t,displayName:n}:t));
+  const settle = (id)   => setTxs(p=>p.map(t=>t.id===id?{...t,settled:true}:t));
 
-  const filtered=transactions.filter(t=>{
+  const list = txs.filter(t => {
     if(search) return (t.displayName||t.merchant).toLowerCase().includes(search.toLowerCase());
     if(filter==="split") return t.split;
     if(filter==="personal") return !t.split;
     return true;
   });
-  const openTx=detailTx?transactions.find(t=>t.id===detailTx):null;
+  const det = detailId ? txs.find(t=>t.id===detailId) : null;
 
-  return(
-    <div style={{background:C.bg,minHeight:"100vh",paddingBottom:100}}>
-      <TxDetailSheet open={!!openTx} tx={openTx} onClose={()=>setDetailTx(null)} onUpdateCategory={updateCat} onUpdateName={updateName} onMarkSplit={markSplit} onMarkSettled={markSettled} onSplitSaved={s=>{onSplitSaved(s);}} transactions={transactions}/>
-      <SplitSheet open={!!splitTxId} onClose={()=>setSplitTxId(null)} transactions={transactions} preSelectedTxId={splitTxId} onSave={s=>{onSplitSaved(s);setSplitTxId(null);setTransactions(prev=>prev.map(t=>t.id===s.existingTxId?{...t,split:true,people:s.people,myShare:s.myShare}:t));}}/>
+  return (
+    <div style={{ position:"fixed", top:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:430, bottom:82, display:"flex", flexDirection:"column", background:U.soft }}>
+      <TxDetail open={!!det} tx={det} onClose={()=>setDetailId(null)} onCat={upCat} onName={upName} onSplit={id=>setSplitId(id)} onSettle={settle} onSplitSaved={s=>{onSplitSaved(s);setTxs(p=>p.map(t=>t.id===s.existingTxId?{...t,split:true,people:s.people,myShare:s.myShare}:t));}} transactions={txs} />
+      <SplitSheet open={!!splitId} onClose={()=>setSplitId(null)} transactions={txs} preId={splitId} onSave={s=>{onSplitSaved(s);setTxs(p=>p.map(t=>t.id===s.existingTxId?{...t,split:true,people:s.people,myShare:s.myShare}:t));}} />
 
-      {/* Header */}
-      <div style={{background:C.card,padding:"20px",marginBottom:8}}>
-        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:14}}>
-          <h1 style={{color:C.text,fontSize:26,fontWeight:800,margin:0,letterSpacing:"-0.5px"}}>Activity</h1>
-          <div style={{display:"flex",gap:8,alignItems:"center"}}>
-            {categorizing&&<div style={{display:"flex",alignItems:"center",gap:5}}><div style={{width:7,height:7,borderRadius:"50%",background:C.accent,animation:"pulse 1s infinite"}}/><span style={{color:C.accent,fontSize:12,fontWeight:600}}>AI sorting</span></div>}
-            <button onClick={onReimport} style={{background:C.bg,border:`1px solid ${C.border}`,color:C.textSub,fontSize:13,fontWeight:600,padding:"7px 12px",borderRadius:20,cursor:"pointer"}}>Import</button>
+      {/* Fixed header */}
+      <div style={{ background:U.canvas, padding:`${S.lg+4}px ${S.md}px ${S.sm}px`, flexShrink:0 }}>
+        <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:S.md }}>
+          <h1 style={{ ...txt(T.h1) }}>Activity</h1>
+          <div style={{ display:"flex", gap:S.sm, alignItems:"center" }}>
+            {categorizing && <div style={{ display:"flex", alignItems:"center", gap:5 }}>
+              <div style={{ width:6,height:6,borderRadius:"50%",background:U.ink,animation:"pulse 1s infinite" }} />
+              <span style={{ ...txt(T.tiny) }}>AI SORTING</span>
+            </div>}
+            <button onClick={onImport} style={{ background:U.soft,border:`1px solid ${U.border}`,color:U.ink,borderRadius:999,padding:"7px 14px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit" }}>Import</button>
           </div>
         </div>
         {/* Search */}
-        <div style={{position:"relative",marginBottom:12}}>
-          <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:16,color:C.textMuted}}>🔍</span>
-          <input placeholder="Search transactions" value={search} onChange={e=>setSearch(e.target.value)} style={{width:"100%",background:C.bg,border:`1px solid ${C.border}`,borderRadius:12,padding:"11px 14px 11px 36px",color:C.text,fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit"}}/>
+        <div style={{ position:"relative", marginBottom:S.sm }}>
+          <span style={{ position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",fontSize:15,color:U.inkMuted }}>🔍</span>
+          <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search"
+            style={{ width:"100%",background:U.soft,border:"none",borderRadius:12,padding:"11px 14px 11px 36px",color:U.ink,fontSize:14,outline:"none",boxSizing:"border-box",fontFamily:"inherit" }} />
         </div>
         {/* Filters */}
-        <div style={{display:"flex",gap:8}}>
+        <div style={{ display:"flex", gap:S.sm }}>
           {["all","split","personal"].map(f=>(
-            <button key={f} onClick={()=>{setFilter(f);setSearch("");}} style={{background:filter===f&&!search?C.accent:C.bg,border:`1px solid ${filter===f&&!search?C.accent:C.border}`,color:filter===f&&!search?"#fff":C.textSub,borderRadius:20,padding:"7px 16px",fontSize:13,fontWeight:600,cursor:"pointer",textTransform:"capitalize",transition:"all 0.15s"}}>{f}</button>
+            <button key={f} onClick={()=>{setFilter(f);setSearch("");}} style={{ background:filter===f&&!search?U.ink:U.soft, color:filter===f&&!search?"#fff":U.ink, border:"none", borderRadius:999, padding:"7px 16px", fontSize:13, fontWeight:filter===f&&!search?700:400, cursor:"pointer", fontFamily:"inherit", textTransform:"capitalize" }}>{f}</button>
           ))}
         </div>
       </div>
 
-      {/* Transaction list */}
-      {!transactions.length&&<div style={{textAlign:"center",paddingTop:60}}>
-        <p style={{fontSize:40,margin:"0 0 12px"}}>📭</p>
-        <p style={{color:C.textSub,fontSize:16,margin:"0 0 4px"}}>No transactions yet</p>
-        <p style={{color:C.textMuted,fontSize:13,margin:"0 0 20px"}}>Import your Chase CSV to get started</p>
-        <button onClick={onReimport} style={{background:C.accent,border:"none",color:"#fff",borderRadius:12,padding:"12px 24px",fontSize:15,fontWeight:600,cursor:"pointer"}}>Import CSV</button>
-      </div>}
-
-      <div style={{background:C.card}}>
-        {filtered.map((t,i)=>(
+      {/* Scrollable list */}
+      <div style={{ flex:1, overflowY:"auto", background:U.canvas, marginTop:S.sm }}>
+        {!txs.length && (
+          <div style={{ textAlign:"center", padding:`${S.xl}px ${S.md}px` }}>
+            <p style={{ fontSize:40,margin:`0 0 ${S.md}px` }}>📭</p>
+            <p style={{ ...txt(T.h3), marginBottom:S.xs }}>No transactions</p>
+            <p style={{ ...txt(T.sub), marginBottom:S.lg }}>Import your Chase CSV to get started</p>
+            <Pill black label="Import CSV" onPress={onImport} />
+          </div>
+        )}
+        {list.map((t,i)=>(
           <div key={t.id}>
-            {i>0&&<div style={{height:1,background:C.border,marginLeft:68}}/>}
-            <button onClick={()=>{haptic();setDetailTx(t.id);}} style={{width:"100%",background:"none",border:"none",padding:"14px 20px",display:"flex",alignItems:"center",gap:14,cursor:"pointer",transition:"background 0.1s"}}
-              onMouseEnter={e=>e.currentTarget.style.background=C.bg}
-              onMouseLeave={e=>e.currentTarget.style.background="none"}>
-              <div style={{width:44,height:44,borderRadius:12,background:CAT_COLOR[t.category]+"18",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22,flexShrink:0}}>
-                {CAT_EMOJI[t.category]||"💳"}
-              </div>
-              <div style={{flex:1,textAlign:"left",minWidth:0}}>
-                <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:3}}>
-                  <p style={{color:C.text,fontSize:15,fontWeight:600,margin:0,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.displayName||t.merchant}</p>
-                  {t.split&&<span style={{background:C.accentDim,color:C.accent,fontSize:10,fontWeight:700,padding:"2px 6px",borderRadius:6,flexShrink:0}}>SPLIT</span>}
-                  {t.settled&&<span style={{background:"#9CA3AF18",color:C.textMuted,fontSize:10,fontWeight:700,padding:"2px 6px",borderRadius:6,flexShrink:0}}>SETTLED</span>}
+            {i>0 && <Div indent={72} />}
+            <button onClick={()=>setDetailId(t.id)} style={{ width:"100%",background:"none",border:"none",padding:"13px 16px",display:"flex",alignItems:"center",gap:14,cursor:"pointer",fontFamily:"inherit" }}>
+              <Icon emoji={CAT_E[t.category]||"💳"} color={CAT_C[t.category]||U.grey} size={44} />
+              <div style={{ flex:1, textAlign:"left", minWidth:0 }}>
+                <div style={{ display:"flex", alignItems:"center", gap:6, marginBottom:3 }}>
+                  <p style={{ ...txt(T.body), overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{t.displayName||t.merchant}</p>
+                  {t.split&&<span style={{ background:U.soft,color:U.inkSub,fontSize:10,fontWeight:700,padding:"2px 6px",borderRadius:4,flexShrink:0 }}>SPLIT</span>}
                 </div>
-                <div style={{display:"flex",alignItems:"center",gap:6}}>
-                  <span style={{color:C.textMuted,fontSize:12}}>{t.date}</span>
-                  {t.category&&<><span style={{color:C.border,fontSize:12}}>·</span><span style={{color:CAT_COLOR[t.category],fontSize:12,fontWeight:500}}>{t.category}</span></>}
-                  {!t.category&&categorizing&&<span style={{color:C.textMuted,fontSize:12}}>· sorting…</span>}
-                </div>
+                <p style={{ ...txt(T.sub) }}>{t.date}{t.category?` · ${t.category}`:""}{!t.category&&categorizing?" · sorting…":""}</p>
               </div>
-              <div style={{textAlign:"right",flexShrink:0}}>
-                <p style={{color:C.text,fontSize:15,fontWeight:700,margin:"0 0 2px"}}>${t.myShare.toFixed(2)}</p>
-                {t.split&&t.myShare!==t.total&&<p style={{color:C.textMuted,fontSize:11,margin:0}}>of ${t.total.toFixed(2)}</p>}
+              <div style={{ textAlign:"right", flexShrink:0 }}>
+                <p style={{ ...txt(T.num) }}>${t.myShare.toFixed(2)}</p>
+                {t.split&&t.myShare!==t.total&&<p style={{ ...txt(T.sub), fontSize:11 }}>of ${t.total.toFixed(2)}</p>}
               </div>
             </button>
           </div>
         ))}
+        <div style={{ height:S.md }} />
       </div>
       <style>{`@keyframes pulse{0%,100%{opacity:1}50%{opacity:0.3}}`}</style>
     </div>
   );
 };
 
-// ── Splits ────────────────────────────────────────────────────────
-const Splits=({splits,setSplits,transactions,showAdd,setShowAdd,onSplitSaved})=>{
-  const [expanded,setExpanded]=useState(null);
-  const [toast,setToast]=useState(null);
-  function showToast(msg){setToast(msg);setTimeout(()=>setToast(null),2200);}
+// ─── Splits ────────────────────────────────────────────────────────
+const Splits = ({ splits, setSplits, txs, showAdd, setShowAdd, onSplitSaved }) => {
+  const [exp, setExp] = useState(null);
+  const [toast, setToast] = useState(null);
+  const showT = msg => { setToast(msg); setTimeout(()=>setToast(null),2000); };
 
-  const pending=splits.filter(s=>!s.settled);
-  const totalOwed=pending.reduce((s,t)=>s+t.amount,0);
-  const byPerson=pending.reduce((acc,s)=>{if(!acc[s.person])acc[s.person]={person:s.person,total:0,items:[]};acc[s.person].total+=s.amount;acc[s.person].items.push(s);return acc;},{});
+  const pending = splits.filter(s=>!s.settled);
+  const owed = pending.reduce((s,t)=>s+t.amount,0);
+  const byP = pending.reduce((a,s)=>{ if(!a[s.person])a[s.person]={p:s.person,t:0,items:[]}; a[s.person].t+=s.amount; a[s.person].items.push(s); return a; },{});
 
-  function settleAll(person){setSplits(prev=>prev.map(s=>s.person===person?{...s,settled:true}:s));setExpanded(null);showToast(`${person} settled ✓`);}
+  return (
+    <div style={{ position:"fixed", top:0, left:"50%", transform:"translateX(-50%)", width:"100%", maxWidth:430, bottom:82, display:"flex", flexDirection:"column", background:U.soft }}>
+      {toast && <div style={{ position:"absolute",top:S.lg,left:"50%",transform:"translateX(-50%)",background:U.ink,color:"#fff",padding:"10px 20px",borderRadius:999,fontSize:13,fontWeight:700,zIndex:600,whiteSpace:"nowrap" }}>{toast}</div>}
+      <SplitSheet open={showAdd} onClose={()=>setShowAdd(false)} transactions={txs} onSave={s=>{onSplitSaved(s);showT("Split added ✓");}} />
 
-  return(
-    <div style={{background:C.bg,minHeight:"100vh",paddingBottom:100}}>
-      {toast&&<div style={{position:"fixed",bottom:100,left:"50%",transform:"translateX(-50%)",background:C.text,color:"#fff",padding:"10px 20px",borderRadius:20,fontSize:13,fontWeight:600,zIndex:400,whiteSpace:"nowrap"}}>{toast}</div>}
-      <SplitSheet open={showAdd} onClose={()=>setShowAdd(false)} transactions={transactions} onSave={s=>{onSplitSaved(s);showToast("Split added ✓");}}/>
-
-      {/* Header */}
-      <div style={{background:C.card,padding:"20px",marginBottom:8}}>
-        <h1 style={{color:C.text,fontSize:26,fontWeight:800,margin:"0 0 4px",letterSpacing:"-0.5px"}}>Splits</h1>
-        <p style={{color:C.textMuted,fontSize:14,margin:0}}>You're owed <strong style={{color:C.yellow}}>${totalOwed.toFixed(2)}</strong></p>
+      {/* Fixed header */}
+      <div style={{ background:U.canvas, padding:`${S.lg+4}px ${S.md}px ${S.md}px`, flexShrink:0 }}>
+        <h1 style={{ ...txt(T.h1), marginBottom:4 }}>Splits</h1>
+        <p style={{ ...txt(T.sub) }}>You're owed <span style={{ fontWeight:700, color:U.ink }}>${owed.toFixed(2)}</span></p>
       </div>
 
-      {!Object.keys(byPerson).length&&<div style={{textAlign:"center",paddingTop:60}}>
-        <p style={{fontSize:40,margin:"0 0 12px"}}>🎉</p>
-        <p style={{color:C.text,fontSize:18,fontWeight:600,margin:"0 0 4px"}}>All settled up</p>
-        <p style={{color:C.textMuted,fontSize:14}}>Tap + to add a new split</p>
-      </div>}
-
-      <div style={{background:C.card}}>
-        {Object.values(byPerson).map((p,pi)=>(
-          <div key={p.person}>
-            {pi>0&&<Divider/>}
-            <button onClick={()=>{haptic();setExpanded(expanded===p.person?null:p.person);}} style={{width:"100%",background:"none",border:"none",padding:"16px 20px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer"}}>
-              <div style={{display:"flex",alignItems:"center",gap:12}}>
-                <Avatar name={p.person} size={42} color={C.accent}/>
-                <div style={{textAlign:"left"}}>
-                  <p style={{color:C.text,fontSize:16,fontWeight:600,margin:"0 0 2px"}}>{p.person}</p>
-                  <p style={{color:C.textMuted,fontSize:13,margin:0}}>{p.items.length} outstanding</p>
-                </div>
-              </div>
-              <div style={{display:"flex",alignItems:"center",gap:10}}>
-                <p style={{color:C.yellow,fontSize:18,fontWeight:800,margin:0}}>${p.total.toFixed(2)}</p>
-                <span style={{color:C.textMuted,fontSize:18,transform:expanded===p.person?"rotate(90deg)":"rotate(0deg)",transition:"transform 0.2s",display:"inline-block"}}>›</span>
-              </div>
-            </button>
-            {expanded===p.person&&(
-              <div style={{background:C.bg,borderTop:`1px solid ${C.border}`}}>
-                {p.items.map((item,i)=>(
-                  <div key={i} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 20px 12px 72px",borderBottom:i<p.items.length-1?`1px solid ${C.border}`:"none"}}>
-                    <div><p style={{color:C.text,fontSize:14,fontWeight:500,margin:"0 0 2px"}}>{item.merchant}</p>
-                      <p style={{color:C.textMuted,fontSize:12,margin:0}}>{item.date}</p></div>
-                    <p style={{color:C.textSub,fontSize:15,fontWeight:600,margin:0}}>${item.amount.toFixed(2)}</p>
-                  </div>
-                ))}
-                <div style={{padding:"12px 20px 16px"}}>
-                  <button onClick={()=>settleAll(p.person)} style={{width:"100%",background:C.accentDim,border:`1.5px solid ${C.accent}44`,color:C.accent,borderRadius:14,padding:"13px",fontSize:14,fontWeight:700,cursor:"pointer"}}>
-                    Mark all settled · via Zelle
-                  </button>
-                </div>
-              </div>
-            )}
+      {/* Scrollable content */}
+      <div style={{ flex:1, overflowY:"auto", marginTop:S.sm }}>
+        {!Object.keys(byP).length && (
+          <div style={{ background:U.canvas, textAlign:"center", padding:`${S.xl}px ${S.md}px` }}>
+            <p style={{ fontSize:40, margin:`0 0 ${S.sm}px` }}>🎉</p>
+            <p style={{ ...txt(T.h3), marginBottom:S.xs }}>All settled up</p>
+            <p style={{ ...txt(T.sub) }}>Tap + to add a new split</p>
           </div>
-        ))}
+        )}
+
+        <div style={{ background:U.canvas }}>
+          {Object.values(byP).map((p,pi)=>(
+            <div key={p.p}>
+              {pi>0 && <Div />}
+              <button onClick={()=>setExp(exp===p.p?null:p.p)} style={{ width:"100%",background:"none",border:"none",padding:"16px",display:"flex",justifyContent:"space-between",alignItems:"center",cursor:"pointer",fontFamily:"inherit" }}>
+                <div style={{ display:"flex", alignItems:"center", gap:S.md }}>
+                  <Av name={p.p} size={44} />
+                  <div style={{ textAlign:"left" }}>
+                    <p style={{ ...txt(T.body), fontWeight:700, marginBottom:3 }}>{p.p}</p>
+                    <p style={{ ...txt(T.sub) }}>{p.items.length} outstanding</p>
+                  </div>
+                </div>
+                <div style={{ display:"flex", alignItems:"center", gap:S.sm }}>
+                  <p style={{ ...txt(T.num), fontSize:17 }}>${p.t.toFixed(2)}</p>
+                  <span style={{ color:U.inkMuted, fontSize:18, display:"inline-block", transform:exp===p.p?"rotate(90deg)":"rotate(0deg)", transition:"transform 0.2s" }}>›</span>
+                </div>
+              </button>
+              {exp===p.p && (
+                <div style={{ background:U.soft, padding:`0 ${S.md}px` }}>
+                  {p.items.map((item,i)=>(
+                    <div key={i} style={{ display:"flex",justifyContent:"space-between",alignItems:"center",padding:"12px 0",borderBottom:i<p.items.length-1?`1px solid ${U.border}`:"none" }}>
+                      <div>
+                        <p style={{ ...txt(T.body), marginBottom:2 }}>{item.merchant}</p>
+                        <p style={{ ...txt(T.sub) }}>{item.date}</p>
+                      </div>
+                      <p style={{ ...txt(T.num) }}>${item.amount.toFixed(2)}</p>
+                    </div>
+                  ))}
+                  <div style={{ paddingBottom:S.md, paddingTop:S.sm }}>
+                    <button onClick={()=>{ setSplits(prev=>prev.map(s=>s.person===p.p?{...s,settled:true}:s)); setExp(null); showT(`${p.p} settled ✓`); }} style={{ width:"100%",background:U.canvas,border:`1px solid ${U.border}`,color:U.ink,borderRadius:999,padding:"13px",fontSize:14,fontWeight:700,cursor:"pointer",fontFamily:"inherit" }}>
+                      Mark all settled · Zelle
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+        </div>
+        <div style={{ height:S.md }} />
       </div>
 
-      <button onClick={()=>{haptic();setShowAdd(true);}} style={{position:"fixed",bottom:90,right:20,width:56,height:56,borderRadius:"50%",background:C.accent,border:"none",color:"#fff",fontSize:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:`0 4px 20px ${C.accent}55`,zIndex:40}}>+</button>
+      {/* FAB */}
+      <button onClick={()=>setShowAdd(true)} style={{ position:"absolute",bottom:S.lg,right:S.lg,width:56,height:56,borderRadius:"50%",background:U.ink,border:"none",color:"#fff",fontSize:28,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",boxShadow:"0 4px 16px rgba(0,0,0,0.25)",zIndex:40 }}>+</button>
     </div>
   );
 };
 
-// ── Settings ──────────────────────────────────────────────────────
-const Settings=({onReimport,txCount})=>(
-  <div style={{background:C.bg,minHeight:"100vh",paddingBottom:100}}>
-    <div style={{background:C.card,padding:"20px",marginBottom:8}}>
-      <h1 style={{color:C.text,fontSize:26,fontWeight:800,margin:0,letterSpacing:"-0.5px"}}>More</h1>
+// ─── Settings ──────────────────────────────────────────────────────
+const More = ({ onImport, txCount }) => (
+  <div style={{ position:"fixed",top:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:430,bottom:82,background:U.soft,overflowY:"auto" }}>
+    <div style={{ background:U.canvas,padding:`${S.lg+4}px ${S.md}px ${S.md}px`,marginBottom:S.sm }}>
+      <h1 style={{ ...txt(T.h1) }}>More</h1>
     </div>
-    <div style={{background:C.card,marginBottom:8}}>
-      <div style={{padding:"16px 20px",display:"flex",alignItems:"center",gap:14}}>
-        <div style={{width:44,height:44,borderRadius:12,background:"#1E6FCC18",display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>🏦</div>
-        <div style={{flex:1}}>
-          <p style={{color:C.text,fontSize:15,fontWeight:600,margin:"0 0 2px"}}>Chase</p>
-          <p style={{color:C.textMuted,fontSize:13,margin:0}}>{txCount} transactions · CSV import</p>
+    <div style={{ background:U.canvas }}>
+      <div style={{ padding:`${S.md}px`, display:"flex",alignItems:"center",gap:S.md }}>
+        <Icon emoji="🏦" color={U.blue} size={44} />
+        <div style={{ flex:1 }}>
+          <p style={{ ...txt(T.body), fontWeight:700, marginBottom:2 }}>Chase</p>
+          <p style={{ ...txt(T.sub) }}>{txCount} transactions · CSV import</p>
         </div>
-        <button onClick={onReimport} style={{background:C.bg,border:`1px solid ${C.border}`,color:C.textSub,fontSize:13,fontWeight:600,padding:"7px 14px",borderRadius:20,cursor:"pointer"}}>Update</button>
+        <button onClick={onImport} style={{ background:U.soft,border:`1px solid ${U.border}`,color:U.ink,borderRadius:999,padding:"8px 16px",fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit" }}>Update</button>
       </div>
-      <Divider/>
-      <div style={{padding:"16px 20px",display:"flex",alignItems:"center",gap:14}}>
-        <div style={{width:44,height:44,borderRadius:12,background:C.accentDim,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}}>✦</div>
-        <div style={{flex:1}}>
-          <p style={{color:C.text,fontSize:15,fontWeight:600,margin:"0 0 2px"}}>AI categorization</p>
-          <p style={{color:C.textMuted,fontSize:13,margin:0}}>Auto-sorts and names every transaction</p>
+      <Div indent={72} />
+      <div style={{ padding:`${S.md}px`, display:"flex",alignItems:"center",gap:S.md }}>
+        <Icon emoji="✦" color={U.ink} size={44} />
+        <div style={{ flex:1 }}>
+          <p style={{ ...txt(T.body), fontWeight:700, marginBottom:2 }}>AI categorization</p>
+          <p style={{ ...txt(T.sub) }}>Auto-sorts and names every transaction</p>
         </div>
-        <span style={{color:C.accent,fontSize:13,fontWeight:600}}>Active</span>
+        <span style={{ ...txt(T.sub), fontWeight:700, color:U.ink }}>On</span>
       </div>
     </div>
   </div>
 );
 
-// ── AI enrichment serverless fn ───────────────────────────────────
-async function enrichTransactions(txs){
-  const todo=txs.filter(t=>!t.category||!t.displayName);
-  if(!todo.length) return {};
-  try{
-    const r=await fetch("/api/categorize",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({transactions:todo.map(t=>({id:t.id,merchant:t.merchant,amount:t.total}))})});
-    const d=await r.json();
-    return d.categories||{};
-  }catch{return {};}
-}
+// ─── Root ──────────────────────────────────────────────────────────
+export default function App() {
+  const [screen, setScreen] = useState("import");
+  const [tab,    setTab]    = useState("dashboard");
+  const [txs,    setTxs]    = useState([]);
+  const [splits, setSplits] = useState([]);
+  const [ai,     setAi]     = useState(false);
+  const [showAdd,setShowAdd]= useState(false);
 
-// ── Demo ──────────────────────────────────────────────────────────
-const DEMO_TX=[
-  {id:_id++,merchant:"ZAHAV RESTAURANT",displayName:"Zahav",date:"Jun 14",total:187.50,myShare:46.88,split:true,people:["Riya","Dev","Priya"],settled:false,category:"Dining",isCredit:false,source:"demo"},
-  {id:_id++,merchant:"WHOLE FOODS MARKET",displayName:"Whole Foods",date:"Jun 13",total:94.20,myShare:94.20,split:false,people:[],settled:false,category:"Groceries",isCredit:false,source:"demo"},
-  {id:_id++,merchant:"UBER *TRIP",displayName:"Uber",date:"Jun 12",total:22.00,myShare:11.00,split:true,people:["Dev"],settled:true,category:"Transport",isCredit:false,source:"demo"},
-  {id:_id++,merchant:"PARC RESTAURANT",displayName:"Parc",date:"Jun 11",total:312.00,myShare:78.00,split:true,people:["Riya","Dev","Priya"],settled:false,category:"Dining",isCredit:false,source:"demo"},
-  {id:_id++,merchant:"APPLE.COM/BILL",displayName:"Apple Subscription",date:"Jun 10",total:9.99,myShare:9.99,split:false,people:[],settled:false,category:"Subscriptions",isCredit:false,source:"demo"},
-  {id:_id++,merchant:"TRADER JOE S #618",displayName:"Trader Joe's",date:"Jun 9",total:67.40,myShare:33.70,split:true,people:["Riya"],settled:true,category:"Groceries",isCredit:false,source:"demo"},
-  {id:_id++,merchant:"NJTRANSIT - WEB 2001",displayName:"NJ Transit",date:"Jun 12",total:81.95,myShare:81.95,split:false,people:[],settled:false,category:"Transport",isCredit:false,source:"demo"},
-  {id:_id++,merchant:"DD *DOORDASH PAYLESSLI",displayName:"DoorDash",date:"Jun 13",total:42.18,myShare:21.09,split:true,people:["Riya"],settled:false,category:"Dining",isCredit:false,source:"demo"},
-];
-const DEMO_SPLITS=[
-  {id:1,person:"Riya",merchant:"Zahav",amount:46.88,date:"Jun 14",settled:false},
-  {id:2,person:"Dev",merchant:"Zahav",amount:46.88,date:"Jun 14",settled:false},
-  {id:3,person:"Priya",merchant:"Zahav",amount:46.87,date:"Jun 14",settled:false},
-  {id:4,person:"Riya",merchant:"Parc",amount:78.00,date:"Jun 11",settled:false},
-  {id:5,person:"Dev",merchant:"Parc",amount:78.00,date:"Jun 11",settled:false},
-  {id:6,person:"Priya",merchant:"Parc",amount:78.00,date:"Jun 11",settled:false},
-  {id:7,person:"Riya",merchant:"DoorDash",amount:21.09,date:"Jun 13",settled:false},
-];
-
-// ── Root ──────────────────────────────────────────────────────────
-export default function App(){
-  const [screen,setScreen]=useState("import");
-  const [tab,setTab]=useState("dashboard");
-  const [transactions,setTransactions]=useState([]);
-  const [splits,setSplits]=useState([]);
-  const [categorizing,setCategorizing]=useState(false);
-  const [showAdd,setShowAdd]=useState(false);
-
-  function handleSplitSaved(s){
-    const perPerson=parseFloat(((s.total-s.myShare)/s.people.length).toFixed(2));
-    const newSplits=s.people.map((p,i)=>({id:Date.now()+i,person:p,merchant:s.merchant,amount:perPerson,date:s.date,settled:false}));
-    setSplits(prev=>[...prev,...newSplits]);
-    if(s.existingTxId) setTransactions(prev=>prev.map(t=>t.id===s.existingTxId?{...t,split:true,people:s.people,myShare:s.myShare}:t));
+  function saveSplit(s) {
+    const per = parseFloat(((s.total-s.myShare)/s.people.length).toFixed(2));
+    const ns = s.people.map((p,i)=>({ id:Date.now()+i,person:p,merchant:s.merchant,amount:per,date:s.date,settled:false }));
+    setSplits(prev=>[...prev,...ns]);
+    if(s.existingTxId) setTxs(prev=>prev.map(t=>t.id===s.existingTxId?{...t,split:true,people:s.people,myShare:s.myShare}:t));
   }
 
-  async function handleImport(txs){
-    setTransactions(txs);setSplits([]);setScreen("app");setTab("transactions");
-    setCategorizing(true);
-    const result=await enrichTransactions(txs);
-    setTransactions(prev=>prev.map(t=>{
-      const r=result[String(t.id)];
-      if(!r) return{...t,category:t.category||"Other"};
-      // API returns {category, displayName} or just string
-      if(typeof r==="string") return{...t,category:t.category||r};
-      return{...t,category:t.category||r.category||"Other",displayName:t.displayName||r.displayName||null};
+  async function importTxs(raw) {
+    setTxs(raw); setSplits([]); setScreen("app"); setTab("transactions"); setAi(true);
+    const res = await enrich(raw);
+    setTxs(prev=>prev.map(t=>{
+      const r = res[String(t.id)];
+      if(!r) return {...t,category:t.category||"Other"};
+      if(typeof r==="string") return {...t,category:t.category||r};
+      return {...t,category:t.category||r.category||"Other",displayName:t.displayName||r.displayName||null};
     }));
-    setCategorizing(false);
+    setAi(false);
   }
 
-  function handleSkip(){setTransactions(DEMO_TX);setSplits(DEMO_SPLITS);setScreen("app");}
+  if (screen==="import") return <ImportScreen onImport={importTxs} />;
 
-  if(screen==="import") return <ImportScreen onImport={handleImport} onSkip={handleSkip}/>;
-
-  return(
-    <div style={{background:C.bg,minHeight:"100vh",maxWidth:430,margin:"0 auto",fontFamily:"-apple-system,BlinkMacSystemFont,'SF Pro Display','SF Pro Text',sans-serif",position:"relative",overflowX:"hidden"}}>
-      {/* Status bar */}
-      <div style={{height:54,background:C.card,display:"flex",alignItems:"flex-end",justifyContent:"center",paddingBottom:8,position:"sticky",top:0,zIndex:10,borderBottom:`1px solid ${C.border}`}}>
-        <div style={{width:126,height:34,background:C.dark,borderRadius:20}}/>
-      </div>
-      <div style={{minHeight:"calc(100vh - 54px)"}}>
-        {tab==="dashboard"&&<Page active={tab==="dashboard"}><Dashboard transactions={transactions} splits={splits} setTab={setTab} onReimport={()=>setScreen("import")}/></Page>}
-        {tab==="transactions"&&<Page active={tab==="transactions"}><Activity transactions={transactions} setTransactions={setTransactions} categorizing={categorizing} onReimport={()=>setScreen("import")} onSplitSaved={handleSplitSaved}/></Page>}
-        {tab==="splits"&&<Page active={tab==="splits"}><Splits splits={splits} setSplits={setSplits} transactions={transactions} showAdd={showAdd} setShowAdd={setShowAdd} onSplitSaved={handleSplitSaved}/></Page>}
-        {tab==="settings"&&<Page active={tab==="settings"}><Settings onReimport={()=>setScreen("import")} txCount={transactions.length}/></Page>}
-      </div>
-      <BottomNav active={tab} setActive={t=>{setTab(t);if(t!=="splits")setShowAdd(false);}}/>
+  return (
+    <div style={{ maxWidth:430,margin:"0 auto",fontFamily:"-apple-system,'SF Pro Text',sans-serif",background:U.soft,height:"100dvh",overflow:"hidden",position:"relative" }}>
+      {tab==="dashboard"    && <Dashboard txs={txs} splits={splits} setTab={setTab} onImport={()=>setScreen("import")} />}
+      {tab==="transactions" && <Activity  txs={txs} setTxs={setTxs} categorizing={ai} onImport={()=>setScreen("import")} onSplitSaved={saveSplit} />}
+      {tab==="splits"       && <Splits    splits={splits} setSplits={setSplits} txs={txs} showAdd={showAdd} setShowAdd={setShowAdd} onSplitSaved={saveSplit} />}
+      {tab==="settings"     && <More      onImport={()=>setScreen("import")} txCount={txs.length} />}
+      <Nav tab={tab} setTab={t=>{setTab(t);if(t!=="splits")setShowAdd(false);}} />
     </div>
   );
 }
